@@ -1,0 +1,16 @@
+{
+  "name": "symbiosim",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/main.js",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "node scripts/serve.js",
+    "build": "node scripts/build.js",
+    "benchmark": "node scripts/benchmark.js",
+    "soak": "node scripts/soak.js",
+    "check:browser": "node scripts/browser-check.js",
+    "test": "node --test"
+  }
+}
