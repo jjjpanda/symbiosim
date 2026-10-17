@@ -6,7 +6,7 @@ const reflect = value => {
 // Bounded visual samples of the scalar fields; these carry no chemical mass.
 // Their movement follows the solver and never consumes the biological RNG.
 export function advanceParticles(view, dt) {
-  const count = view.overlay === 'organisms' ? 0 : view.overlay === 'liquid' ? (view.sim.nx < 20 ? 400 : 1200) : view.sim.nx < 20 ? 1600 : 4800;
+  const count = view.overlay === 'organisms' ? 0 : view.overlay === 'liquid' ? (view.sim.nx < 20 ? 60 : 180) : view.sim.nx < 20 ? 1600 : 4800;
   if (!view.particles || view.particles.length !== count * 3) {
     view.particles = new Float32Array(count * 3);
     view.particlePrevious = new Float32Array(count * 3);

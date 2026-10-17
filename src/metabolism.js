@@ -1,11 +1,11 @@
 // Molecule packets are schematic: their phase advances only when the cell
 // actually processes food. No wall-clock animation or renderer RNG is used.
 export const CHEMICAL_COLORS = {
-  sugar: [1, .79, .37],
-  oxygen: [.35, .87, .91],
-  ethanol: [1, .56, .21],
-  acid: [.94, .49, .37],
-  co2: [.79, .94, 1]
+  sugar: [.85, .67, .35],
+  oxygen: [.42, .66, .74],
+  ethanol: [.77, .49, .30],
+  acid: [.69, .40, .36],
+  co2: [.64, .73, .73]
 };
 
 const YEAST_CHANNELS = [['sugar', true, 1], ['ethanol', false, 1], ['co2', false, 1]];

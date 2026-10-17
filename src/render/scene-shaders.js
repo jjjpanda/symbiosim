@@ -1,8 +1,13 @@
 const transform = `
 uniform mat4 uCamera;
 uniform vec2 uTilt;
-vec3 orient(vec3 p) { return vec3(p.x*uTilt.x+(p.y-.6666667)*uTilt.y,-p.x*uTilt.y+(p.y-.6666667)*uTilt.x+.6666667,p.z); }
-vec3 orientNormal(vec3 p) { return vec3(p.x*uTilt.x+p.y*uTilt.y,-p.x*uTilt.y+p.y*uTilt.x,p.z); }
+uniform vec2 uTiltDirection;
+vec3 orientNormal(vec3 p) {
+  float along=dot(p.xz,uTiltDirection);
+  vec2 horizontal=p.xz+uTiltDirection*(along*(uTilt.x-1.)+p.y*uTilt.y);
+  return vec3(horizontal.x,-along*uTilt.y+p.y*uTilt.x,horizontal.y);
+}
+vec3 orient(vec3 p) { return orientNormal(p-vec3(0.,.6666667,0.))+vec3(0.,.6666667,0.); }
 `;
 export const meshVertex = `#version 300 es
 precision highp float;
@@ -91,6 +96,11 @@ void main() {
     color=vec4(mix(base,reflected,.4)+spec*.9,.18+fresnel*.65); return;
   }
   if(vMaterial==6) { color=vec4(base,alpha); return; }
+  if(vMaterial==7) {
+    float fresnel=.12+.88*pow(1.-facing,4.);
+    vec3 steel=base*(.38+.42*diffuse)+reflected*(.22+.35*fresnel);
+    color=vec4(steel+spec*.55,alpha); return;
+  }
   color=vec4(base*diffuse+spec*.35,alpha);
 }`;
 export const particleVertex = `#version 300 es
@@ -115,6 +125,10 @@ void main() {
   if(vKind<-.5) { float a=-vKind*6.283185; p=mat2(cos(a),-sin(a),sin(a),cos(a))*p; p.x*=2.35; }
   float r=length(p); if(r>1. || vColor.a<.01) discard;
   float rim=1.-smoothstep(.35,.82,r);
+  if(vKind>2.5) {
+    float ring=smoothstep(.70,.79,r)*(1.-smoothstep(.88,.98,r));
+    color=vec4(vColor.rgb,vColor.a*ring); return;
+  }
   if(vKind>1.5) { color=vec4(vColor.rgb,vColor.a*exp(-r*r*3.1)); return; }
   if(vKind>.5) {
     vec3 n=vec3(p.x,-p.y,sqrt(max(0.,1.-r*r)));

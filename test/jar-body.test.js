@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { Simulation } from '../src/engine.js';
 import { stepPellicle, pellicleStats } from '../src/sim/pellicle.js';
 import { filmPoint, materialPoint, sampleFilm, worldFilm } from '../src/sim/film-body.js';
-import { surfaceRest, vesselTilt } from '../src/sim/vessel.js';
+import { surfaceRest, vesselTilt, vesselOrientation, vesselGravity } from '../src/sim/vessel.js';
 import { stepSurface } from '../src/sim/surface.js';
 import { sampleSurface } from '../src/sim/spatial.js';
-import { defaultCamera, turnCamera, bindCamera } from '../src/render/camera.js';
+import { defaultCamera, turnCamera, bindCamera, tipVessel } from '../src/render/camera.js';
 
 const near = (a, b, tolerance = 1e-8) => assert.ok(Math.abs(a - b) < tolerance, `${a} differs from ${b}`);
 function sheet() {
@@ -30,10 +30,40 @@ test('dragging rotates, shift-dragging tips, and clicking never opens a zoom ove
   down(false); move(); view.canvas.onpointerup({ pointerId: 1, type: 'pointerup' }); click();
   near(view.camera.yaw, 45); assert.equal(inspections, 0);
   down(true); move(); view.canvas.onpointerup({ pointerId: 1, type: 'pointerup' }); click();
-  near(view.sim.vessel.tilt, 8); near(view.camera.yaw, 45); assert.equal(inspections, 0);
+  near(view.sim.vessel.tilt, (8 - 3.2) / Math.sqrt(2)); near(view.sim.vessel.tiltZ, (-8 - 3.2) / Math.sqrt(2)); near(view.camera.yaw, 45); assert.equal(inspections, 0);
   down(false); view.canvas.onpointercancel({ pointerId: 1, type: 'pointercancel' }); click(); assert.equal(inspections, 0);
   down(false); view.canvas.onpointerup({ pointerId: 1, type: 'pointerup' }); click(); assert.equal(inspections, 0);
-  controls.get('#upright-jar').onclick(); near(view.sim.vessel.tilt, 0);
+  controls.get('#upright-jar').onclick(); near(view.sim.vessel.tilt, 0); near(view.sim.vessel.tiltZ, 0);
+  view.camera.yaw = 0;
+  down(true);
+  view.canvas.onpointermove({ pointerId: 1, clientX: 1050, clientY: 50 });
+  near(view.sim.vessel.tilt, 12);
+  view.canvas.onpointermove({ pointerId: 1, clientX: 1040, clientY: 50 });
+  near(view.sim.vessel.tilt, 11.2, 1e-7);
+  view.canvas.onpointerup({ pointerId: 1 });
+});
+
+test('tipping responds on both screen axes at any orbit, clamps radially, and restores depth tilt', () => {
+  const sim = sheet(), view = { sim, camera: defaultCamera() };
+  tipVessel(view, 0, 8);
+  near(sim.vessel.tilt, 0); near(sim.vessel.tiltZ, 8);
+  const [gx, gy, gz] = vesselGravity(sim);
+  near(gx, 0); assert.ok(gz > .1 && gy < 1);
+  assert.ok(surfaceRest(sim, .5, .8) < surfaceRest(sim, .5, .2));
+  const original = sim.snapshot(), restored = Simulation.restore(original);
+  near(restored.vessel.tiltZ, 8);
+  delete original.vessel.tiltZ;
+  near(Simulation.restore(original).vessel.tiltZ, 0);
+  original.vessel.tiltZ = Infinity;
+  assert.throws(() => Simulation.restore(original), /orientation/);
+  sim.vessel.tilt = sim.vessel.tiltZ = 0; view.camera.yaw = 90;
+  tipVessel(view, 8, 0);
+  near(sim.vessel.tilt, 0); near(sim.vessel.tiltZ, -8);
+  tipVessel(view, 100, 100);
+  near(vesselOrientation(sim).angle, 12 * Math.PI / 180);
+  assert.ok(Math.hypot(sim.vessel.tilt, sim.vessel.tiltZ) <= 12.000001);
+  sim.volume = .95; tipVessel(view, 100, 0);
+  assert.ok(vesselOrientation(sim).angle < .02, 'Full vessels respect rim clearance in both directions');
 });
 
 test('a floating sheet drifts with currents, retains momentum, and preserves each material layer', () => {
@@ -118,11 +148,13 @@ test('a small tea jet dents the mother, rebounds after unloading, and retains it
 });
 
 test('physical tilt drives bulk sloshing rather than changing only the image', () => {
-  const sim = sheet(); sim.settings.convection = 0; sim.vessel.tilt = 12;
-  const totals = Object.keys(sim.fields).map(name => sim.total(name));
-  sim.stepFluid(.01);
-  assert.ok(Math.max(...sim.vx.map(Math.abs)) > .01);
-  for (const [i, name] of Object.keys(sim.fields).entries()) near(sim.total(name), totals[i]);
+  for (const [axis, flow] of [['tilt', 'vx'], ['tiltZ', 'vz']]) {
+    const sim = sheet(); sim.settings.convection = 0; sim.vessel[axis] = 12;
+    const totals = Object.keys(sim.fields).map(name => sim.total(name));
+    sim.stepFluid(.01);
+    assert.ok(Math.max(...sim[flow].map(Math.abs)) > .01);
+    for (const [i, name] of Object.keys(sim.fields).entries()) near(sim.total(name), totals[i]);
+  }
 });
 
 test('thicker, broader and cooler mothers sit deeper, while retained gas supports them', () => {

@@ -48,7 +48,9 @@ export function validateSnapshot(data) {
     !Array.isArray(data.membrane[key]) || data.membrane[key].length !== surface ||
     data.membrane[key].some(value => !finite(value, key === 'velocity' ? -2 : -.6, key === 'velocity' ? 2 : .76))))) throw new Error('Invalid cellulose membrane');
   if (data.version >= 11) {
-    if (!data.vessel || !finite(data.vessel.tilt, -12, 12) || !finite(data.vessel.aspect, .2, 5)) throw new Error('Invalid vessel orientation');
+    if (!data.vessel || !finite(data.vessel.tilt, -12, 12) ||
+      (data.vessel.tiltZ !== undefined && !finite(data.vessel.tiltZ, -12, 12)) ||
+      !finite(data.vessel.aspect, .2, 5)) throw new Error('Invalid vessel orientation');
     const body = data.membrane.body;
     if (!body || ['offsetX', 'offsetZ', 'velocityX', 'velocityZ'].some(key => !Array.isArray(body[key]) || body[key].length !== surface ||
       body[key].some(v => !finite(v, key.startsWith('offset') ? -.18 : -.35, key.startsWith('offset') ? .18 : .35)))) throw new Error('Invalid floating cellulose body');

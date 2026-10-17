@@ -5,7 +5,7 @@ import { prepareTransport, transportScalar } from './transport.js';
 import { projectPressure } from './pressure.js';
 import { confineVolumeVorticity } from './vorticity.js';
 import { worldFilm } from './film-body.js';
-import { surfaceRest, vesselTilt } from './vessel.js';
+import { surfaceRest, vesselGravity } from './vessel.js';
 
 // All momentum components share a full-volume pressure projection. Jets,
 // density fronts and cross-depth vortices evolve without circulation planes.
@@ -13,7 +13,7 @@ export function stepFluid(sim, dt) {
   if (!(dt > 0)) return;
   const { nx, ny, nz, n } = sim, plane = nx * ny;
   const contact = worldFilm(sim);
-  const tilt = vesselTilt(sim), gravityX = Math.sin(tilt), gravityY = Math.cos(tilt);
+  const [gravityX, gravityY, gravityZ] = vesselGravity(sim);
   const rest = sim.fluidRestSurface ||= new Float64Array(nx * nz);
   for (let z = 0; z < nz; z++) for (let x = 0; x < nx; x++) rest[z * nx + x] = surfaceRest(sim, (x + .5) / nx, (z + .5) / nz);
   const b = sim.fluidBuffers ||= {
@@ -35,7 +35,7 @@ export function stepFluid(sim, dt) {
     const buoyancy = (-thermalDelta * 7.8 + (localSugar - sugar) * .06
       - (sim.fields.co2[i] - gas) * .12) * sim.settings.convection;
     b.vx[i] = v[0] * damp + buoyancy * gravityX * dt;
-    b.vy[i] = v[1] * damp + buoyancy * gravityY * dt; b.vz[i] = v[2] * damp;
+    b.vy[i] = v[1] * damp + buoyancy * gravityY * dt; b.vz[i] = v[2] * damp + buoyancy * gravityZ * dt;
     if (pouring) {
       const dx = (px - INLET - .018 * Math.sin(phase - py * 8)) / (.085 + py * .16);
       const dz = nz > 1 ? (pz - INLET_DEPTH) / (.19 + py * .12) : 0;
@@ -60,7 +60,7 @@ export function stepFluid(sim, dt) {
     b.vx[i] += coupled * nx * (surface[right] - surface[left] - restSlope + .2 * wet * (film[right] - film[left] - restSlope));
     b.vz[i] += coupled * nz * (surface[front] - surface[back] - restDepth + .2 * wet * (film[front] - film[back] - restDepth));
   }
-  addBubbleWakes(sim, b, dt, gravityX, gravityY);
+  addBubbleWakes(sim, b, dt, gravityX, gravityY, gravityZ);
   confineVolumeVorticity(sim, b, dt);
   b.fx.fill(0); b.fy.fill(0); b.fz.fill(0);
   for (let z = 0; z < nz; z++) for (let y = 0; y < ny; y++) for (let x = 0; x < nx; x++) {
@@ -121,20 +121,20 @@ export function stepFluid(sim, dt) {
 // Buoyant bubbles transfer momentum to the liquid they displace. The closed
 // pressure solve supplies the surrounding return flow and interacting wakes.
 // Scatter only into nearby cells; work is bounded by the 80-bubble pool.
-function addBubbleWakes(sim, velocity, dt, gx, gy) {
+function addBubbleWakes(sim, velocity, dt, gx, gy, gz) {
   const { nx, ny, nz } = sim;
   for (const bubble of sim.gas.bubbles) {
     const radius = .055 + bubble.size * .014;
-    const cx = bubble.x + gx * radius, cy = bubble.y + gy * radius;
+    const cx = bubble.x + gx * radius, cy = bubble.y + gy * radius, cz = bubble.z + gz * radius;
     const minX = Math.max(0, Math.floor((cx - radius * 2) * nx)), maxX = Math.min(nx - 1, Math.ceil((cx + radius * 2) * nx));
     const minY = Math.max(0, Math.floor((cy - radius * 2) * ny)), maxY = Math.min(ny - 1, Math.ceil((cy + radius * 2) * ny));
-    const minZ = Math.max(0, Math.floor((bubble.z - radius * 2) * nz)), maxZ = Math.min(nz - 1, Math.ceil((bubble.z + radius * 2) * nz));
+    const minZ = Math.max(0, Math.floor((cz - radius * 2) * nz)), maxZ = Math.min(nz - 1, Math.ceil((cz + radius * 2) * nz));
     for (let z = minZ; z <= maxZ; z++) for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
       const dx = ((x + .5) / nx - cx) / radius, dy = ((y + .5) / ny - cy) / radius;
-      const dz = nz > 1 ? ((z + .5) / nz - bubble.z) / Math.max(radius, .5 / nz) : 0;
+      const dz = nz > 1 ? ((z + .5) / nz - cz) / Math.max(radius, .5 / nz) : 0;
       const impulse = dt * 3.5 * bubble.size ** 2 * Math.exp(-2 * (dx * dx + dy * dy + dz * dz));
       const i = (z * ny + y) * nx + x;
-      velocity.vx[i] -= gx * impulse; velocity.vy[i] -= gy * impulse;
+      velocity.vx[i] -= gx * impulse; velocity.vy[i] -= gy * impulse; velocity.vz[i] -= gz * impulse;
     }
   }
 }

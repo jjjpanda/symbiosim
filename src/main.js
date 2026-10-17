@@ -4,7 +4,7 @@ import { vesselTemplate, OVERLAYS } from './template.js';
 import { chartSeries, drawChart, historyWindow, readingDeltas } from './charts.js';
 import { advanceParticles } from './render/particles.js';
 import { exchangeSpeed } from './sim/transfer-clock.js';
-import { bindCamera, defaultCamera, turnCamera } from './render/camera.js';
+import { bindCamera, defaultCamera, turnCamera, tipVessel } from './render/camera.js';
 import { vesselTilt } from './sim/vessel.js';
 import { pellicleStats, SKIM_THICKNESS } from './sim/pellicle.js';
 import { teaColor } from './render/objects.js';
@@ -23,7 +23,7 @@ export class SymbiosimVessel extends HTMLElement {
     super();
     const phone = matchMedia('(max-width: 640px)').matches;
     this.sim = new Simulation({ seed: seed(), width: phone ? 16 : 22, height: phone ? 24 : 30, depth: phone ? 5 : 8 });
-    this.voxel = pickVoxel(this.sim);
+    this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
     this.viewMode = 'split';
     this.overlay = 'liquid';
     this.camera = defaultCamera();
@@ -34,7 +34,7 @@ export class SymbiosimVessel extends HTMLElement {
     this.$ = selector => this.shadowRoot.querySelector(selector);
     this.$$ = selector => this.shadowRoot.querySelectorAll(selector);
     this.canvas = this.$('#canvas');
-    this.voxelCanvas = this.$('#voxel-canvas');
+    this.voxelCanvases = { yeast: this.$('#yeast-canvas'), bacteria: this.$('#bacteria-canvas') };
     this.ctx = this.canvas.getContext('2d');
     this.$('link').onload = () => { this.readPalette(); this.resize(); };
     this.bind();
@@ -81,55 +81,46 @@ export class SymbiosimVessel extends HTMLElement {
       btn.classList?.toggle('on', active);
       btn.setAttribute?.('aria-pressed', String(active));
     });
-    const toggleBtn = this.$('#toggle-voxel-view');
-    if (toggleBtn) {
-      toggleBtn.textContent = mode === 'voxel' ? 'Split' : 'Expand';
-      toggleBtn.setAttribute?.('aria-pressed', String(mode === 'voxel'));
-    }
     this.resize();
   }
 
   bind() {
     this.$$('[data-k]').forEach(button => button.onclick = () => this.command(button.dataset.k));
     this.$$('[data-view-mode]').forEach(button => button.onclick = () => this.setViewMode(button.dataset.viewMode));
-    this.$('#resample-voxel').onclick = () => {
-      this.voxel = pickVoxel(this.sim, this.voxel);
-      this.drawVoxel();
-      this.announce(`Sampled 3D voxel (${this.voxel.gx}, ${this.voxel.gy}, ${this.voxel.gz}).`);
-    };
-    this.$('#toggle-voxel-view').onclick = () => this.setViewMode(this.viewMode === 'voxel' ? 'split' : 'voxel');
-    if (this.voxelCanvas) {
-      let drag = null;
-      this.voxelCanvas.onpointerdown = e => {
-        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, yaw: this.voxel?.yaw ?? .55, pitch: this.voxel?.pitch ?? .32 };
-        this.voxelCanvas.setPointerCapture?.(e.pointerId);
+    for (const [type, canvas] of Object.entries(this.voxelCanvases)) {
+      let drag;
+      canvas.onpointerdown = e => {
+        if (e.button !== 0 || drag) return;
+        canvas.focus();
+        const voxel = this.voxels[type];
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY, yaw: voxel.yaw, pitch: voxel.pitch };
+        canvas.setPointerCapture(e.pointerId);
       };
-      this.voxelCanvas.onpointermove = e => {
-        if (!drag || drag.id !== e.pointerId || !this.voxel) return;
-        this.voxel.yaw = drag.yaw + (e.clientX - drag.x) * .012;
-        this.voxel.pitch = Math.max(-.85, Math.min(.85, drag.pitch + (e.clientY - drag.y) * .012));
+      canvas.onpointermove = e => {
+        if (!drag || drag.id !== e.pointerId) return;
+        const voxel = this.voxels[type];
+        voxel.yaw = drag.yaw + (e.clientX - drag.x) * .012;
+        voxel.pitch = Math.max(-.85, Math.min(.85, drag.pitch + (e.clientY - drag.y) * .012));
         this.drawVoxel();
       };
-      this.voxelCanvas.onpointerup = this.voxelCanvas.onpointercancel = () => { drag = null; };
-      this.voxelCanvas.onkeydown = e => {
-        if (!this.voxel) return;
-        const key = e.key.toLowerCase();
-        if (key === 'arrowleft' || key === 'arrowright') {
-          this.voxel.yaw = (this.voxel.yaw ?? .55) + (key === 'arrowleft' ? -.15 : .15);
-        } else if (key === 'arrowup' || key === 'arrowdown') {
-          this.voxel.pitch = Math.max(-.85, Math.min(.85, (this.voxel.pitch ?? .32) + (key === 'arrowup' ? .12 : -.12)));
-        } else if (key === 'r') {
-          this.voxel.yaw = .55;
-          this.voxel.pitch = .32;
-        } else return;
-        e.preventDefault();
-        e.stopPropagation();
-        this.drawVoxel();
+      const finish = e => {
+        if (!drag || drag.id !== e.pointerId) return;
+        drag = null;
+        if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+      };
+      canvas.onpointerup = canvas.onpointercancel = canvas.onlostpointercapture = finish;
+      canvas.onkeydown = e => {
+        const voxel = this.voxels[type], key = e.key.toLowerCase();
+        if (key === 'arrowleft' || key === 'arrowright') voxel.yaw += key === 'arrowleft' ? -.15 : .15;
+        else if (key === 'arrowup' || key === 'arrowdown') voxel.pitch = Math.max(-.85, Math.min(.85, voxel.pitch + (key === 'arrowup' ? .12 : -.12)));
+        else if (key === 'r') { voxel.yaw = .55; voxel.pitch = .32; }
+        else return;
+        e.preventDefault(); e.stopPropagation(); this.drawVoxel();
       };
     }
     this.addEventListener('keydown', e => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.composedPath()[0].matches?.('input, select, button, summary') || this.$('#panel').open || this.$('#detail').open) return;
-      if (this.command(e.key.toLowerCase())) e.preventDefault();
+      if (this.command(e.key.toLowerCase(), e.shiftKey)) e.preventDefault();
     });
     this.$('#speed').oninput = e => { this.sim.speed = Number(e.target.value); this.updateControls(false); };
     const cover = id => { this.activePreset = null; this.sim.applySettings({ cover: id }); this.updateControls(); this.draw(); };
@@ -144,8 +135,6 @@ export class SymbiosimVessel extends HTMLElement {
     });
     this.$('#overlay').onchange = e => { this.overlay = e.target.value; this.draw(); };
     for (const [id, scale] of SETTINGS) this.$('#' + id).oninput = e => { this.activePreset = null; this.sim.applySettings({ [id]: Number(e.target.value) / scale }); this.updateControls(); this.draw(); };
-    this.$('#quick-room').oninput = e => { this.activePreset = null; this.sim.applySettings({ room: Number(e.target.value) }); this.updateControls(); this.draw(); };
-    this.$('#quick-convection').oninput = e => { this.activePreset = null; this.sim.applySettings({ convection: Number(e.target.value) / 100 }); this.updateControls(); this.draw(); };
     for (const [, id] of OUTPUTS.slice(5)) this.$('#' + id).oninput = () => this.updateControls(false);
     const value = id => Number(this.$('#' + id).value);
     for (const [id, key] of [['auto-drain', 'autoDrain'], ['tea-mode', 'teaMode'], ['auto-skim', 'autoSkim']]) {
@@ -176,9 +165,12 @@ export class SymbiosimVessel extends HTMLElement {
     bindCamera(this); this.updateCamera();
   }
 
-  command(key) {
+  command(key, shift = false) {
     if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) {
-      turnCamera(this.camera, key === 'arrowleft' ? -10 : key === 'arrowright' ? 10 : 0, key === 'arrowup' ? 3 : key === 'arrowdown' ? -3 : 0);
+      const horizontal = key === 'arrowleft' ? -1 : key === 'arrowright' ? 1 : 0;
+      const vertical = key === 'arrowup' ? -1 : key === 'arrowdown' ? 1 : 0;
+      if (shift || this.tiltMode) tipVessel(this, horizontal * 2, vertical * 2);
+      else turnCamera(this.camera, horizontal * 10, -vertical * 3);
       this.updateCamera();
     }
     else if (key === 'r') { Object.assign(this.camera, defaultCamera()); this.updateCamera(); }
@@ -193,7 +185,7 @@ export class SymbiosimVessel extends HTMLElement {
     else if (key === 'n') {
       if (!confirm('Start a new vessel? The current culture will be replaced.')) return true;
       this.sim = new Simulation({ seed: seed(), width: this.sim.nx, height: this.sim.ny, depth: this.sim.nz });
-      this.voxel = pickVoxel(this.sim);
+      this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
       this.pending = 0; this.particles = null; this.activePreset = 'balanced'; this.updateControls();
     }
     else if (key === 't') this.setAttribute('theme', this.isDark() ? 'light' : 'dark');
@@ -206,13 +198,10 @@ export class SymbiosimVessel extends HTMLElement {
 
   intervene(amount, action) { this.announce(amount ? `${action}: ${Math.round(amount * 100)}% of capacity.` : 'No volume available.'); this.updateReadings(); this.draw(); }
   updateCamera() {
-    const tilt = vesselTilt(this.sim);
-    this.$('#jar-tilt').value = this.sim.vessel.tilt;
-    this.$('#jar-tilt-output').value = `${Math.round(tilt * 180 / Math.PI)}°`;
-    for (const key of ['yaw', 'elevation']) {
-      this.$('#camera-' + key).value = this.camera[key];
-      this.$('#camera-' + key + '-output').value = `${Math.round(this.camera[key])}°`;
-    }
+    const tilt = Math.abs(vesselTilt(this.sim));
+    this.$('#jar-tilt-output').value = `${Math.round(tilt * 180 / Math.PI)}° tilt`;
+    this.$('#tilt-mode').setAttribute('aria-pressed', String(Boolean(this.tiltMode)));
+    this.canvas.classList?.toggle('tilting', Boolean(this.tiltMode));
   }
   updateControls(reset = true) {
     const s = this.sim;
@@ -222,16 +211,8 @@ export class SymbiosimVessel extends HTMLElement {
       this.$('#tea-temp').value = s.care.temperature; this.$('#tea-sugar').value = s.care.sugar;
       for (const [id, scale] of SETTINGS) this.$('#' + id).value = s.settings[id] * scale;
     }
-    const convPct = Math.round(s.settings.convection * 100);
-    this.$('#quick-room').value = s.settings.room;
-    this.$('#quick-room-output').value = `${s.settings.room}°C`;
-    this.$('#quick-convection').value = convPct;
-    this.$('#quick-convection-output').value = `${convPct}%`;
-    this.$('#quick-summary').textContent = `${fmt(s.settings.room, 0)}°C · ${convPct}%`;
     this.$('#speed-output').textContent = `${fmt(s.speed, 0)} days/min`;
-    this.$('#theme-name').textContent = this.isDark() ? 'light' : 'dark';
     this.$('[data-k="t"]').setAttribute('aria-label', `Switch to ${this.isDark() ? 'light' : 'dark'} theme`);
-    this.$('#environment-summary').textContent = `${fmt(s.settings.room, 0)}°C room · ${s.settings.cover} cover`;
     this.$$('[data-cover]').forEach(button => { button.classList.toggle('on', button.dataset.cover === s.settings.cover); button.setAttribute('aria-pressed', String(button.dataset.cover === s.settings.cover)); });
     this.$$('[data-preset]').forEach(button => {
       const active = button.dataset.preset === this.activePreset;
@@ -262,7 +243,6 @@ export class SymbiosimVessel extends HTMLElement {
     if (s.care.transfer) this.$('#care-status').textContent = `${s.care.transfer.phase === 'drain' ? 'harvesting' : 'pouring tea'} / ${Math.round((1 - s.care.transfer.remaining / s.care.transfer.total) * 100)}%`;
     this.$('#play').textContent = s.playing ? 'Pause' : 'Resume'; this.$('#day').textContent = `DAY ${fmt(s.day, 2)} · ${Math.round(s.volume * 100)}% full`;
     this.$('.play-button path').setAttribute('d', s.playing ? 'M9 5v14M15 5v14' : 'm8 5 11 7-11 7z');
-    this.$('#environment-summary').textContent = `${fmt(s.settings.room, 0)}°C room · ${s.settings.cover} cover`;
     this.$('#state').textContent = !counts.yeast && !counts.bacteria ? 'culture lost' : s.playing ? '' : 'paused';
     const readings = { day: s.day, temperature: s.meanTemperature(), sugar: s.sugar(), ph: s.ph() };
     const [pr, pg, pb] = teaColor(readings.ph, 0, 'liquid');
@@ -333,12 +313,13 @@ export class SymbiosimVessel extends HTMLElement {
   }
 
   drawVoxel() {
-    if (!this.voxelCanvas || (this.viewMode === 'jar' && (this.clientWidth || 1200) > 1100)) return;
-    if (!this.voxel) this.voxel = pickVoxel(this.sim);
-    const info = renderVoxel(this.voxelCanvas, this.sim, this.voxel, this.isDark(), this.motion);
-    if (info) {
-      this.$('#voxel-coords').textContent = info.coords;
-      this.$('#voxel-summary').textContent = info.summary;
+    if (!this.voxelCanvases || (this.viewMode === 'jar' && (this.clientWidth || 1200) > 1100)) return;
+    for (const [type, canvas] of Object.entries(this.voxelCanvases)) {
+      const info = renderVoxel(canvas, this.sim, this.voxels[type], this.isDark(), this.motion);
+      if (!info) continue;
+      this.$('#' + type + '-coords').textContent = info.coords;
+      this.$('#' + type + '-summary').textContent = info.summary;
+      if (info.replaced) this.announce(`Following another ${type === 'yeast' ? 'yeast' : 'acetic acid bacterium'}; the previous cell is no longer in the vessel.`);
     }
   }
 

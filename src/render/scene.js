@@ -2,11 +2,13 @@ import { createProgram } from './webgl.js';
 import { meshVertex, meshFragment, particleVertex, particleFragment } from './scene-shaders.js';
 import { Geometry, STRIDE } from './geometry.js';
 import { createJar, createTap, buildWater, buildFilm, fieldColor } from './objects.js';
-import { cameraMatrix, liquidPosition, HEIGHT } from './space.js';
+import { cameraMatrix, liquidPosition, containInLiquid, discToMaterial, HEIGHT } from './space.js';
 import { buildStreams } from './streams.js';
 import { advanceParticles } from './particles.js';
-import { vesselTilt } from '../sim/vessel.js';
+import { vesselOrientation } from '../sim/vessel.js';
 import { reactionPackets } from '../metabolism.js';
+import { SPECIES_COLORS, FLOW_COLOR } from './palette.js';
+import { sampleSurface } from '../sim/spatial.js';
 export function createScene(canvas) {
   const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true, depth: false });
   if (!gl)
@@ -21,7 +23,7 @@ export function createScene(canvas) {
     disposeResources(gl, resources);
     throw error;
   }
-  const uniforms = program => Object.fromEntries(['Camera', 'Tilt', 'Eye', 'Background', 'Viewport', 'Backdrop', 'Water', 'Refract', 'Ratio'].map(key => [key, gl.getUniformLocation(program, 'u' + key)]));
+  const uniforms = program => Object.fromEntries(['Camera', 'Tilt', 'TiltDirection', 'Eye', 'Background', 'Viewport', 'Backdrop', 'Water', 'Refract', 'Ratio'].map(key => [key, gl.getUniformLocation(program, 'u' + key)]));
   const meshUniforms = uniforms(meshProgram), pointUniforms = uniforms(pointProgram);
   const gpu = new Map();
   const meshBuffer = mesh => {
@@ -71,20 +73,45 @@ export function createScene(canvas) {
     points: new Float32Array(8192 * 9), count: 0, overflow: 0, lost: false, backend: 'webgl2', revision: 0, waterRevision: 0 };
   canvas.addEventListener?.('webglcontextlost', event => { event.preventDefault(); state.lost = true; });
   canvas.addEventListener?.('webglcontextrestored', () => { state.lost = false; state.invalid = true; });
-  const addPoint = (p, color, alpha, size, kind = 0) => {
+  let renderSim, renderHeight = 710, trailCeiling = 1;
+  const bounded = [0, 0, 0], projected = [0, 0, 0];
+  const spriteMargin = (p, size, kind) => {
+    const depth=state.camera.project(p,projected)[2];
+    const pixels=Math.max(1.8,Math.min(kind>1.5?46:25,size*3.8/depth));
+    return .004+pixels*depth*Math.tan(17*Math.PI/180)/renderHeight;
+  };
+  const addPoint = (p, color, alpha, size, kind = 0, internal = true) => {
     if (state.count >= 8192) {
       state.overflow++;
       return false;
     }
+    // Include the billboard's world-space radius, not just its centre. This
+    // also contains large glows on small screens and at oblique camera angles.
+    if(internal) {
+      const margin=spriteMargin(p,size,kind);
+      containInLiquid(renderSim,p,margin,bounded);
+      const uv=discToMaterial(bounded[0],bounded[2]);
+      const water=(renderSim.volume-sampleSurface(renderSim,renderSim.surface.displacement,...uv))*HEIGHT;
+      // Near an empty bottom, an oversized sprite may have no room to fit.
+      if(bounded[1]+margin>water) return false;
+    }
     const i = state.count++ * 9;
-    state.points.set(p, i);
+    state.points.set(internal ? bounded : p, i);
     state.points.set(color, i + 3);
     state.points[i + 6] = alpha;
     state.points[i + 7] = size;
     state.points[i + 8] = kind;
     return true;
   };
-  const yeastColor = [1, .72, .24], bacteriaColor = [.18, .92, .78], symColor = [.62, .94, .56], normal = [0, 1, 0];
+  const trailVertex = (p, n, color, alpha, material) => {
+    if(trailCeiling<.054) return;
+    containInLiquid(renderSim, p, .008, bounded);
+    // A segment joining two locally submerged endpoints can still cross a
+    // wave trough. A common ceiling keeps the whole line below every trough.
+    bounded[1] = Math.min(bounded[1], trailCeiling);
+    state.trails.vertex(bounded, n, color, alpha, material);
+  };
+  const yeastColor = SPECIES_COLORS.yeast, bacteriaColor = SPECIES_COLORS.bacteria, symColor = [.64, .69, .56], normal = [0, 1, 0];
   const activeBacteria = [];
   function emitOrganismsAndGas(view, s, p, old, mark) {
     for (let idx = 0; idx < s.agents.length; idx++) {
@@ -92,6 +119,10 @@ export function createScene(canvas) {
       liquidPosition(s, agent.x, agent.y, agent.z, p);
       const isYeast = agent.type === 'yeast';
       const energy = agent.energy ?? .5;
+      if (agent.id === view.voxels?.[agent.type]?.agentId) {
+        containInLiquid(s, p, spriteMargin(p,12,3));
+        addPoint(p, isYeast ? yeastColor : bacteriaColor, .85, 12, 3);
+      }
       addPoint(p, isYeast ? yeastColor : bacteriaColor, .96, (isYeast ? 4.5 : 4) + Math.min(1.4, energy * .9), isYeast ? 0 : -1 - (agent.id * .618 % 1));
     }
     if (view.motion) {
@@ -102,8 +133,8 @@ export function createScene(canvas) {
         old[0] = p[0] - (bubble.drift || 0) * .018;
         old[1] = Math.max(.04, p[1] - (.024 + bubble.size * .03));
         old[2] = p[2] - (bubble.depthDrift || 0) * .018;
-        state.trails.vertex(old, normal, [.76, .92, .88], .08, 6);
-        state.trails.vertex(p, normal, [.86, .97, .94], .45, 6);
+        trailVertex(old, normal, FLOW_COLOR, .05, 6);
+        trailVertex(p, normal, FLOW_COLOR, .2, 6);
         addPoint(old, [.82, .94, .9], .58, Math.max(2.2, bSize * .48), 1);
       }
       if (s.gas.bursts) {
@@ -135,23 +166,22 @@ export function createScene(canvas) {
       }
   }
   function emitMetabolicInteractions(view, s, p, mark, mate, maxPoints) {
+    const selected = { sugar: 'sugar', oxygen: 'oxygen', ethanol: 'ethanol', acidity: 'acid', co2: 'co2' }[view.overlay];
+    if (view.overlay !== 'organisms' && !selected) return;
     activeBacteria.length = 0;
     for (let i = 0; i < s.agents.length; i++) {
       const a = s.agents[i];
       if (a.type === 'bacteria' && ((a.metabolism?.ethanol ?? 0) + (a.metabolism?.acid ?? 0)) > .01)
         activeBacteria.push(a);
     }
-    const packetStride = view.overlay === 'organisms' ? 1 : 2;
+    const packetStride = view.overlay === 'organisms' ? 4 : 8;
     for (let idx = 0; idx < s.agents.length && state.count < maxPoints; idx++) {
       const agent = s.agents[idx];
       liquidPosition(s, agent.x, agent.y, agent.z, p);
       const isYeast = agent.type === 'yeast';
-      const cellColor = isYeast ? yeastColor : bacteriaColor;
-      const energy = agent.energy ?? .5;
-      if ((energy > .62 || (agent.age ?? 1) < .35) && agent.id % 3 === 0 && state.count < maxPoints)
-        addPoint(p, cellColor, .16, isYeast ? 10.5 : 9, 2);
       if (agent.id % packetStride === 0) {
         for (const packet of reactionPackets(agent, view.motion)) {
+          if (selected && packet.name !== selected) continue;
           if (state.count >= maxPoints)
             break;
           const span = packet.intake ? 1 - packet.phase : packet.phase;
@@ -159,17 +189,17 @@ export function createScene(canvas) {
           mark[0] = p[0] + Math.cos(packet.angle) * radius;
           mark[1] = p[1] + Math.sin(packet.angle) * radius;
           mark[2] = p[2] + Math.sin(agent.id + packet.angle) * radius * .72;
-          addPoint(mark, packet.color, .34 + .62 * packet.strength, 2.5 + packet.strength * 1.35);
+          addPoint(mark, packet.color, .3 + .35 * packet.strength, 2 + packet.strength);
           if (view.motion && packet.strength > .2) {
-            state.trails.vertex(p, normal, packet.color, .18 + .25 * packet.strength, 6);
-            state.trails.vertex(mark, normal, packet.color, .42 + .35 * packet.strength, 6);
+            trailVertex(p, normal, packet.color, .08, 6);
+            trailVertex(mark, normal, packet.color, .18 + .15 * packet.strength, 6);
           }
         }
       }
       // Symbiotic cross-feeding filaments require active yeast ethanol production and
       // active bacterial oxidation, selecting the nearest partner independent of array order.
       const yeastFlux = isYeast ? (agent.metabolism?.ethanol ?? 0) : 0;
-      if (view.motion && yeastFlux > .01 && (agent.id % 2 === 0 || view.overlay === 'organisms') && state.count < maxPoints) {
+      if (view.motion && view.overlay === 'organisms' && yeastFlux > .01 && agent.id % 8 === 0 && state.count < maxPoints) {
         let bestOther = null, bestD2 = .026;
         for (let j = 0; j < activeBacteria.length; j++) {
           const other = activeBacteria[j];
@@ -185,8 +215,8 @@ export function createScene(canvas) {
           const fluxScale = Math.min(1, Math.sqrt(Math.min(yeastFlux, bacFlux)));
           liquidPosition(s, bestOther.x, bestOther.y, bestOther.z, mate);
           const linkAlpha = (1 - bestD2 / .026) * (view.overlay === 'organisms' ? .62 : .42) * (.45 + .55 * fluxScale);
-          state.trails.vertex(p, normal, yeastColor, linkAlpha, 6);
-          state.trails.vertex(mate, normal, bacteriaColor, linkAlpha, 6);
+          trailVertex(p, normal, yeastColor, linkAlpha * .4, 6);
+          trailVertex(mate, normal, bacteriaColor, linkAlpha * .4, 6);
           const pulse = ((s.day * (24 + 28 * fluxScale) + agent.id * .17) % 1 + 1) % 1;
           mark[0] = p[0] + (mate[0] - p[0]) * pulse;
           mark[1] = p[1] + (mate[1] - p[1]) * pulse;
@@ -198,6 +228,11 @@ export function createScene(canvas) {
   }
   function synchronize(view) {
     const s = view.sim, coverage = s.coverage(), thermalOverlay = view.overlay === 'temperature';
+    renderSim = s;
+    renderHeight = Math.max(100, view.canvas.clientHeight);
+    let deepestSurface = 0;
+    for (const displacement of s.surface.displacement) deepestSurface = Math.max(deepestSurface, displacement);
+    trailCeiling = Math.max(.046, (s.volume - deepestSurface) * HEIGHT - .012);
     const simChanged = state.sim !== s || state.day !== s.day || state.volume !== s.volume || state.coverage !== coverage;
     if (simChanged) {
       buildFilm(state.film, s);
@@ -220,7 +255,8 @@ export function createScene(canvas) {
     state.streams.count = 0;
     const p = [0, 0, 0], old = [0, 0, 0], mark = [0, 0, 0], mate = [0, 0, 0], particles = view.particles;
     // 1. Reserve primary capacity for streams/droplets, living organisms, and gas bubbles/pockets.
-    state.stream = buildStreams(state.streams, s, addPoint);
+    // Transfer droplets intentionally travel outside the vessel.
+    state.stream = buildStreams(state.streams, s, (...args) => addPoint(...args, false));
     emitOrganismsAndGas(view, s, p, old, mark);
     // 2. Emit metabolic packets and cross-feeding links within a bounded budget.
     emitMetabolicInteractions(view, s, p, mark, mate, Math.min(6800, state.count + 3200));
@@ -234,6 +270,7 @@ export function createScene(canvas) {
     const meanTemp = tempCount ? tempSum / tempCount : s.settings.room;
     const plumeBudget = Math.min(7100, state.count + 260);
     for (let i = 0; i < s.n && state.count < plumeBudget; i += stride) {
+      if (!thermalOverlay) break;
       const localDelta = s.temperature[i] - meanTemp;
       const roomDelta = s.temperature[i] - s.settings.room;
       const signal = localDelta * 4.5 + roomDelta * .45;
@@ -255,8 +292,8 @@ export function createScene(canvas) {
           old[0] = p[0] - vx * scale;
           old[1] = p[1] + vy * scale;
           old[2] = p[2] - vz * scale;
-          state.trails.vertex(old, normal, plumeColor, .14, 6);
-          state.trails.vertex(p, normal, plumeColor, thermalOverlay ? .58 : .38, 6);
+          trailVertex(old, normal, plumeColor, .14, 6);
+          trailVertex(p, normal, plumeColor, .58, 6);
         }
       }
     }
@@ -265,11 +302,12 @@ export function createScene(canvas) {
     const showStreaks = view.motion && view.particlePrevious && (view.overlay === 'flow' || view.overlay === 'liquid' || thermalOverlay);
     for (let i = 0; i < particles.length && state.count < 8192; i += 3) {
       const x = particles[i], y = particles[i + 1], z = particles[i + 2], index = s.index(x, y, z);
-      const [amount, color] = fieldColor(s, index, selected >= 0 ? selected : i / 3 % 5);
+      const [amount, fieldTint] = selected >= 0 ? fieldColor(s, index, selected) : [1, FLOW_COLOR];
+      const color = fieldTint;
       if (amount < .004)
         continue;
       liquidPosition(s, x, y, z, p);
-      addPoint(p, color, .48 + .46 * Math.min(1, amount), 2.35 + (i / 3 % 7) * .22);
+      addPoint(p, color, selected >= 0 ? .18 + .38 * Math.min(1, amount) : view.overlay === 'liquid' ? .20 : .3, selected >= 0 ? 2.2 : 1.8);
       if (showStreaks && (view.overlay === 'flow' || (i / 3 % 2 === 0))) {
         liquidPosition(s, view.particlePrevious[i], view.particlePrevious[i + 1], view.particlePrevious[i + 2], old);
         const dx = p[0] - old[0], dy = p[1] - old[1], dz = p[2] - old[2];
@@ -279,8 +317,8 @@ export function createScene(canvas) {
           old[0] = p[0] - dx * boost;
           old[1] = p[1] - dy * boost;
           old[2] = p[2] - dz * boost;
-          state.trails.vertex(old, normal, color, view.overlay === 'flow' ? .32 : .2, 6);
-          state.trails.vertex(p, normal, color, view.overlay === 'flow' ? .62 : .42, 6);
+          trailVertex(old, normal, color, view.overlay === 'flow' ? .2 : .04, 6);
+          trailVertex(p, normal, color, view.overlay === 'flow' ? .42 : .12, 6);
         }
       }
     }
@@ -327,7 +365,7 @@ export function createScene(canvas) {
       state.pixelWidth = pixelWidth;
       state.pixelHeight = pixelHeight;
     }
-    const tilt = vesselTilt(view.sim), camera = cameraMatrix(width, height, view.camera, tilt), dark = view.isDark();
+    const pose = vesselOrientation(view.sim), tilt = pose.angle, camera = cameraMatrix(width, height, view.camera, pose), dark = view.isDark();
     state.camera = camera;
     synchronize(view);
     gl.viewport(0, 0, pixelWidth, pixelHeight);
@@ -342,6 +380,7 @@ export function createScene(canvas) {
     gl.useProgram(meshProgram);
     gl.uniformMatrix4fv(meshUniforms.Camera, false, camera.matrix);
     gl.uniform2f(meshUniforms.Tilt, Math.cos(tilt), Math.sin(tilt));
+    gl.uniform2f(meshUniforms.TiltDirection, pose.x, pose.z);
     gl.uniform3fv(meshUniforms.Eye, camera.eye);
     gl.uniform3fv(meshUniforms.Background, dark ? [.063, .078, .09] : [.957, .953, .937]);
     gl.uniform1f(meshUniforms.Water, view.sim.volume * HEIGHT);
@@ -358,6 +397,7 @@ export function createScene(canvas) {
     gl.useProgram(pointProgram);
     gl.uniformMatrix4fv(pointUniforms.Camera, false, camera.matrix);
     gl.uniform2f(pointUniforms.Tilt, Math.cos(tilt), Math.sin(tilt));
+    gl.uniform2f(pointUniforms.TiltDirection, pose.x, pose.z);
     gl.uniform1f(pointUniforms.Ratio, ratio);
     gl.bindVertexArray(pointVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, pointBuffer);

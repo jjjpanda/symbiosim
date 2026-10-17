@@ -1,15 +1,20 @@
+import { phFromAcids } from '../src/sim/chemistry.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Simulation } from '../src/engine.js';
 import { Geometry, STRIDE } from '../src/render/geometry.js';
 import { createJar, createTap, buildFilm, buildWater, teaColor } from '../src/render/objects.js';
-import { cameraMatrix, liquidPosition, discToMaterial } from '../src/render/space.js';
+import { cameraMatrix, liquidPosition, discToMaterial, containInLiquid, interiorRadius, HEIGHT } from '../src/render/space.js';
 import { streamState, sampleStream, buildStreams, SPOUT } from '../src/render/streams.js';
 import { transferDuration } from '../src/sim/transfer-clock.js';
 import { createScene } from '../src/render/scene.js';
 import { filmPoint, materialPoint } from '../src/sim/film-body.js';
 import { stepPellicle } from '../src/sim/pellicle.js';
-import { pickVoxel, renderVoxel } from '../src/render/voxel.js';
+import { pickVoxel, renderVoxel, voxelContext } from '../src/render/voxel.js';
+import { sampleSurface } from '../src/sim/spatial.js';
+import { LIQUID_RADIUS } from '../src/sim/constants.js';
+import { SPECIES_COLORS, FLOW_COLOR } from '../src/render/palette.js';
+import { CHEMICAL_COLORS } from '../src/metabolism.js';
 const near = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) < tolerance, `${a} differs from ${b}`);
 function mockCanvas() {
   let handle = 0;
@@ -197,13 +202,14 @@ test('one GPU scene shares depth, keeps particles visible, reuses storage and re
   const depthAttachments = calls.filter(c => c[0] === 'framebufferRenderbuffer' && c[2] === 'DEPTH_ATTACHMENT');
   assert.equal(depthAttachments.length, 2);
   assert.equal(depthAttachments[0][4], depthAttachments[1][4], 'Both targets share the same depth storage');
-  assert.ok(scene.count > 900);
+  assert.ok(scene.count >= sim.agents.length);
+  assert.ok(scene.count <= sim.agents.length + 200, 'Default view leaves most of the volume clear');
   assert.ok(scene.points.subarray(0, scene.count * 9).every(Number.isFinite));
   let visible = 0;
   for (let i = 0; i < scene.count; i++)
     if (scene.points[i * 9 + 6] > .4 && scene.points[i * 9 + 7] >= 2.2)
       visible++;
-  assert.ok(visible > 800, 'Visible particles must have meaningful pixel sizes and opacity');
+  assert.ok(visible >= sim.agents.length, 'Every living cell remains visibly sized and opaque');
   const allocations = calls.filter(c => ['bufferData', 'texImage2D', 'renderbufferStorage'].includes(c[0])).length;
   const film = scene.film.vertices, points = scene.points;
   view.camera.yaw = 80;
@@ -250,58 +256,130 @@ test('liquid color shifts significantly from dark mahogany tea to bright golden-
   assert.ok(sourWater.vertices[6] > sweetWater.vertices[6] + .25, 'Water mesh vertex colors reflect pH drop');
   assert.ok(sourWater.vertices[7] > sweetWater.vertices[7] + .25);
 });
-test('3D voxel sampler matches simulation pH, restricts organisms to the selected solver cell, and preserves both species', () => {
-  const sim = new Simulation(), coords = pickVoxel(sim, 0);
-  assert.ok(coords.gx >= 0 && coords.gx < sim.nx);
-  assert.ok(coords.gy >= 0 && coords.gy < sim.ny);
-  assert.ok(coords.gz >= 0 && coords.gz < sim.nz);
-  let arcs = 0, strokes = 0, fillStyles = [];
-  const ctx = new Proxy({ fillStyle: '', strokeStyle: '', lineWidth: 1, lineCap: 'round' }, {
-    set: (target, prop, value) => {
-      if (prop === 'fillStyle') fillStyles.push(value);
-      target[prop] = value;
-      return true;
-    },
-    get: (target, prop) => prop in target ? target[prop] : () => {
-      if (prop === 'arc' || prop === 'ellipse') arcs++;
-      if (prop === 'stroke') strokes++;
-      if (prop === 'createLinearGradient' || prop === 'createRadialGradient') return { addColorStop() {} };
-    }
-  });
-  const canvas = { width: 0, height: 0, clientWidth: 260, clientHeight: 190, getContext: () => ctx };
-  sim.agents.push(
-    { id: 901, type: 'yeast', x: (coords.gx + .4) / sim.nx, y: (coords.gy + .4) / sim.ny, z: (coords.gz + .4) / sim.nz, age: 1, energy: .8, traits: { rate: 1, tolerance: 1 }, metabolism: { ethanol: 1 } },
-    { id: 902, type: 'bacteria', x: (coords.gx + .6) / sim.nx, y: (coords.gy + .6) / sim.ny, z: (coords.gz + .6) / sim.nz, age: 1, energy: .8, traits: { rate: 1, tolerance: 1 }, metabolism: { acid: 1 } }
-  );
-  const sample = renderVoxel(canvas, sim, coords, true, true);
-  assert.ok(sample && sample.coords.includes(`${coords.gx}`) && sample.summary.includes('pH'));
-  assert.ok(arcs > 15 && strokes >= 5, 'Voxel renderer draws 3D wireframe, microbes, molecules, and reaction bridges');
-
-  // Verify uniform acid fields produce identical pH in simulation and voxel view
-  for (const acetic of [.25, 1.5, 3]) {
-    sim.fields.acetic.fill(acetic);
-    sim.fields.gluconic.fill(.18);
-    const vSample = renderVoxel(canvas, sim, coords, true, true);
-    assert.ok(Math.abs(vSample.ph - sim.ph()) < 1e-9, `Voxel pH (${vSample.ph}) must match simulation pH (${sim.ph()}) at acetic=${acetic}`);
+test('tracking voxels stay locked to a single live organism across grid boundaries and recover after loss', () => {
+  const sim = new Simulation(), yeast = pickVoxel(sim, 'yeast'), bacteria = pickVoxel(sim, 'bacteria');
+  const ctx = new Proxy({}, { get: (target, prop) => prop in target ? target[prop] : () =>
+    prop.startsWith('create') ? { addColorStop() {} } : undefined });
+  const canvas = { clientWidth: 260, clientHeight: 156, getContext: () => ctx };
+  for (const voxel of [yeast, bacteria]) {
+    const sample = renderVoxel(canvas, sim, voxel);
+    assert.equal(sample.cells, 1);
+    assert.equal(sample[voxel.type], 1);
+    const agent = sim.agents.find(a => a.id === voxel.agentId);
+    agent.x = .87; agent.y = .61; agent.z = .22;
+    sim.agents.reverse(); // Array order changes must not change the lock.
+    const moved = renderVoxel(canvas, sim, voxel);
+    assert.equal(moved.agentId, agent.id);
+    assert.equal(voxel.gx, Math.floor(.87 * sim.nx));
+    assert.equal(voxel.gy, Math.floor(.61 * sim.ny));
+    assert.equal(voxel.gz, Math.floor(.22 * sim.nz));
+    const idx = sim.index(agent.x, agent.y, agent.z);
+    sim.fields.acetic[idx] = 2.1; sim.fields.gluconic[idx] = .2;
+    const local = renderVoxel(canvas, sim, voxel);
+    assert.equal(local.ph, phFromAcids(2.1, .2));
+    sim.agents = sim.agents.filter(a => a.id !== agent.id);
+    const replaced = renderVoxel(canvas, sim, voxel);
+    assert.equal(replaced.replaced, true);
+    assert.equal(replaced.cells, 1);
+    assert.equal(sim.agents.find(a => a.id === replaced.agentId).type, voxel.type);
   }
+  sim.agents = sim.agents.filter(a => a.type !== 'yeast');
+  const empty = renderVoxel(canvas, sim, yeast);
+  assert.equal(empty.cells, 0); assert.equal(empty.agentId, null);
+  sim.addAgent('yeast', .5, .5);
+  assert.equal(renderVoxel(canvas, sim, yeast).cells, 1);
+});
 
-  // Verify only organisms inside the selected solver cell are included and both species survive truncation
-  const targetCoord = { gx: 5, gy: 5, gz: 2, yaw: .55, pitch: .32 };
-  const cx = (5 + .5) / sim.nx, cy = (5 + .5) / sim.ny, cz = (2 + .5) / sim.nz;
-  const outX = (7 + .5) / sim.nx;
-  sim.agents = [
-    { id: 99, type: 'bacteria', x: outX, y: cy, z: cz, age: 1, energy: .8, traits: { rate: 1, tolerance: 1 } }
-  ];
-  const emptyCellSample = renderVoxel(canvas, sim, targetCoord, true, true);
-  assert.equal(emptyCellSample.cells, 0, 'Organisms outside the selected solver cell must not appear in the voxel view');
+test('tracking context uses real neighbors and simulation-time paths without changing the culture', () => {
+  const sim = new Simulation(), voxel = pickVoxel(sim, 'yeast');
+  const target = sim.agents.find(a => a.id === voxel.agentId);
+  Object.assign(target, { x: .5, y: .5, z: .5 });
+  const neighbor = { ...target, id: 9001, type: 'bacteria', x: .52 };
+  sim.agents = [target, neighbor, { ...neighbor, id: 9002, x: .98 }];
+  const snapshot = sim.snapshot(), first = voxelContext(sim, voxel, target);
+  assert.deepEqual(first.neighbors.map(n => n.agent.id), [neighbor.id]);
+  assert.deepEqual(first.neighbors[0].position, liquidPosition(sim, neighbor.x, neighbor.y, neighbor.z));
+  assert.equal(first.trace.length, 1);
+  voxelContext(sim, voxel, target);
+  assert.equal(voxel.trace.length, 1, 'Paused redraws never extend the path');
+  assert.deepEqual(sim.snapshot(), snapshot, 'Observation must not consume RNG or modify organisms');
+  const priorDelta = first.neighbors[0].delta[0];
+  target.x = .51; sim.day += .01;
+  const moved = voxelContext(sim, voxel, target);
+  assert.ok(moved.neighbors[0].delta[0] < priorDelta, 'Neighbor moves relative to the followed cell');
+  assert.deepEqual(moved.trace[0], first.centre);
+  assert.equal(moved.trace.length, 2);
+  for(let i=0;i<50;i++) { sim.day += .01; voxelContext(sim,voxel,target); }
+  assert.equal(voxel.trace.length, 32, 'Tracking history is bounded');
+  voxelContext(sim,voxel,neighbor);
+  assert.equal(voxel.trace.length, 1, 'Acquiring another cell starts a new path');
+});
 
-  sim.agents = [];
-  for (let i = 0; i < 20; i++) sim.agents.push({ id: i + 1, type: 'yeast', x: cx, y: cy, z: cz, age: 1, energy: .8, traits: { rate: 1, tolerance: 1 } });
-  for (let i = 0; i < 5; i++) sim.agents.push({ id: 100 + i, type: 'bacteria', x: cx, y: cy, z: cz, age: 1, energy: .8, traits: { rate: 1, tolerance: 1 } });
-  const mixedSample = renderVoxel(canvas, sim, targetCoord, true, true);
-  assert.equal(mixedSample.cells, 18);
-  assert.ok(mixedSample.yeast > 0 && mixedSample.bacteria > 0, 'Stratified sampling must include both yeast and bacteria when 20 yeast precede 5 bacteria');
+test('animated cell chemistry, billboards and entire trails stay inside the liquid at every wall', () => {
+  const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation();
+  sim.volume = .55;
+  sim.agents = [0,1,2,3,4,5,6,7].map((n) => ({
+    id: n*8, type:n%2?'bacteria':'yeast', x:n&1?.999:.001, y:n&2?.999:.001,z:n&4?.999:.001,
+    age:1,energy:.9,metabolism:{sugar:10,oxygen:.5,ethanol:8,co2:5,acid:5,turnover:n+.3}
+  }));
+  sim.gas.bubbles = [{id:99,x:.999,y:.001,z:.999,size:1.2,drift:3,depthDrift:-3}];
+  sim.gas.bursts = [{x:.999,z:.999,age:.1,strength:1}];
+  for(let i=0;i<sim.surface.displacement.length;i++) sim.surface.displacement[i]=.018*Math.sin(i*.9);
+  sim.temperature.fill(sim.settings.room+10);
+  sim.vx.fill(1); sim.vy.fill(-1); sim.vz.fill(1);
+  const view={sim,canvas:{clientWidth:300,clientHeight:390},camera:{yaw:65,elevation:32},ratio:1,motion:true,isDark:()=>false,
+    voxels:{yeast:{agentId:0},bacteria:{agentId:8}}};
+  const before=sim.snapshot();
+  const inside=(point,margin=0)=>{
+    assert.ok(Math.hypot(point[0],point[2])+margin<=LIQUID_RADIUS+1e-6,'Full sprite radius is within the glass');
+    assert.ok(Math.hypot(point[0],point[2])+margin<=Math.min(interiorRadius(point[1]-margin),interiorRadius(point[1]+margin))+1e-6,'Foot and shoulder match the actual inner wall');
+    assert.ok(point[1]>=.044+margin-1e-6,'Full sprite clears the glass floor');
+    const uv=discToMaterial(point[0],point[2]);
+    const surface=(sim.volume-sampleSurface(sim,sim.surface.displacement,...uv))*HEIGHT;
+    assert.ok(point[1]+margin<=surface+1e-6,'Full sprite stays below the local liquid surface');
+  };
+  for(const volume of [.04,.55,.95]) for(const overlay of ['liquid','organisms','sugar','oxygen','ethanol','acidity','co2','flow','temperature']) {
+    sim.volume=volume;
+    view.overlay=overlay;
+    sim.vessel.tilt=7; sim.vessel.tiltZ=-6;
+    scene.render(view);
+    for(let i=0;i<scene.count;i++) {
+      const at=i*9;
+      const point=scene.points.subarray(at,at+3),depth=scene.camera.project(point)[2],size=scene.points[at+7],kind=scene.points[at+8];
+      const pixels=Math.max(1.8,Math.min(kind>1.5?46:25,size*3.8/depth));
+      inside(point,pixels*depth*Math.tan(17*Math.PI/180)/view.canvas.clientHeight);
+    }
+    for(let i=0;i<scene.trails.count;i+=2) {
+      const a=scene.trails.vertices.subarray(i*STRIDE,i*STRIDE+3),b=scene.trails.vertices.subarray((i+1)*STRIDE,(i+1)*STRIDE+3);
+      for(const t of [0,.25,.5,.75,1]) inside(Array.from(a,(v,j)=>v+(b[j]-v)*t));
+    }
+  }
+  const after=sim.snapshot(); before.vessel.tilt=7; before.vessel.tiltZ=-6; before.volume=.95;
+  assert.deepEqual(after,before);
+  const offset=[3,-2,-3],bounded=containInLiquid(sim,offset,.02,[0,0,0]);
+  inside(bounded,.02); assert.deepEqual(offset,[3,-2,-3],'Clamping can preserve its input');
+  scene.dispose();
+});
 
+test('default culture view suppresses reaction confetti and chemical views use one chemical tint', () => {
+  const {canvas}=mockCanvas(),scene=createScene(canvas),sim=new Simulation();
+  sim.gas.bubbles=[];sim.gas.bursts=[];sim.gas.pockets.fill(0);
+  for(const agent of sim.agents) agent.metabolism={sugar:8,oxygen:.5,ethanol:4,co2:4,acid:3,turnover:10};
+  const view={sim,canvas:{clientWidth:560,clientHeight:710},camera:{},ratio:1,motion:true,overlay:'liquid',isDark:()=>true};
+  const colors=()=>Array.from({length:scene.count},(_,i)=>Array.from(scene.points.subarray(i*9+3,i*9+6)));
+  const same=(a,b)=>a.every((value,j)=>Math.abs(value-b[j])<1e-6);
+  scene.render(view);
+  assert.equal(scene.count,sim.agents.length+180);
+  assert.ok(colors().every(color=>[...Object.values(SPECIES_COLORS),FLOW_COLOR].some(allowed=>same(color,allowed))));
+  for(const [overlay,chemical] of [['sugar','sugar'],['oxygen','oxygen'],['ethanol','ethanol'],['acidity','acid'],['co2','co2']]) {
+    view.overlay=overlay;scene.render(view);
+    assert.ok(colors().every(color=>[...Object.values(SPECIES_COLORS),CHEMICAL_COLORS[chemical]].some(allowed=>same(color,allowed))));
+  }
+  scene.dispose();
+});
+
+test('rendered film follows negative gas-supported displacement', () => {
+  const sim = new Simulation();
   // Verify buildFilm renders negative gas-supported displacement without clamping at -0.035
   const filmHigh = new Geometry(24000), filmClamped = new Geometry(24000);
   sim.pellicle.fill(.9);
@@ -346,7 +424,7 @@ test('scene reserves capacity for bubbles in dense cultures, suppresses trails u
   assert.equal(scene.trails.count, 0, 'Dormant cells with zero metabolic rates must not emit cross-feeding filaments');
 
   // Activate metabolism and verify candidate bacteria array ordering does not change the selected partner
-  const y = { id: 2, type: 'yeast', x: .5, y: .5, z: .5, age: 1, energy: .5, traits: { rate: 1, tolerance: 1 }, metabolism: { sugar: 2, oxygen: 0, ethanol: 1.5, co2: 1, acid: 0, turnover: 1 } };
+  const y = { id: 8, type: 'yeast', x: .5, y: .5, z: .5, age: 1, energy: .5, traits: { rate: 1, tolerance: 1 }, metabolism: { sugar: 2, oxygen: 0, ethanol: 1.5, co2: 1, acid: 0, turnover: 1 } };
   const bFar = { id: 3, type: 'bacteria', x: .6, y: .5, z: .5, age: 1, energy: .5, traits: { rate: 1, tolerance: 1 }, metabolism: { sugar: 0, oxygen: .2, ethanol: 1.2, co2: 0, acid: 1, turnover: 1 } };
   const bNear = { id: 4, type: 'bacteria', x: .52, y: .5, z: .5, age: 1, energy: .5, traits: { rate: 1, tolerance: 1 }, metabolism: { sugar: 0, oxygen: .2, ethanol: 1.2, co2: 0, acid: 1, turnover: 1 } };
   sim.agents = [y, bFar, bNear];

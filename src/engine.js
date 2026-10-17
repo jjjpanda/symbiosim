@@ -332,7 +332,7 @@ export class Simulation {
     if (data.version >= 6) sim.membrane = structuredClone(data.membrane);
     if (data.version < 11) sim.membrane.body = createFilmBody(sim.pellicle.length);
     if (data.version < 12) sim.membrane.body.pose = createFilmPose();
-    if (data.version >= 11) sim.vessel = structuredClone(data.vessel);
+    if (data.version >= 11) sim.vessel = { tiltZ: 0, ...structuredClone(data.vessel) };
     sim.surface = data.version >= 9 ? structuredClone(data.surface) : createSurface(sim.pellicle.length);
     if (data.version < 8) {
       sim.membrane.layers = createMembrane(sim.pellicle.length).layers;

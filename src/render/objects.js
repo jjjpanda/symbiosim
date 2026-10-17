@@ -1,5 +1,5 @@
 import { Geometry } from './geometry.js';
-import { HEIGHT, liquidPosition, discToMaterial } from './space.js';
+import { HEIGHT, liquidPosition, discToMaterial, INNER_WALL } from './space.js';
 import { FILM_CUTOFF, LIQUID_RADIUS, clamp } from '../sim/constants.js';
 import { toDisc } from '../sim/domain.js';
 import { sampleSurface } from '../sim/spatial.js';
@@ -40,30 +40,53 @@ export function teaColor(ph, heat = 0, overlay = 'liquid', out = [0, 0, 0]) {
 export function createJar() {
   const jar = new Geometry(14000);
   jar.lathe([[.42, .012], [.48, .016], [.506, .055], [.509, 1.17], [.499, 1.235], [.465, 1.275],
-    [.464, 1.31], [.48, 1.325], [.477, 1.342], [.46, 1.347], [.449, 1.332], [.449, 1.285],
-    [.480, 1.23], [.490, .072], [.474, .046], [.42, .044], [0, .044], [0, .012], [.42, .012]], [.76, .88, .93], .06, 1);
+    [.464, 1.31], [.48, 1.325], [.477, 1.342], [.46, 1.347], ...INNER_WALL.slice().reverse(),
+    [.42, .044], [0, .044], [0, .012], [.42, .012]], [.76, .88, .93], .06, 1);
   return jar;
 }
 export function createTap() {
-  const tap = new Geometry(6000), metal = [.57, .43, .23];
+  const tap = new Geometry(16000), metal = [.57, .61, .60], dark = [.14, .19, .19];
   const [sx, sy, sz] = SPOUT;
-  // Radial mounting through the wall; the final pipe segment is vertical,
-  // sharing the exact mouth center and axis used by the discharged jet.
-  tap.tube([[-.478, .19, sz], [-.535, .19, sz]], [.065, .065], metal, 0, 24);
-  tap.tube([[-.51, .19, sz], [-.61, .19, sz], [sx, .16, sz], [sx, sy + .014, sz]], [.044, .044, .046, .046], metal, 0, 20);
-  tap.tube([[-.565, .19, sz], [-.565, .28, sz]], [.018, .018], metal, 0, 12);
-  tap.tube([[-.615, .28, sz], [-.515, .28, sz]], [.013, .013], [.68, .54, .30], 0, 12);
-  // A dark open bore, surrounded by a beveled metal nozzle lip.
+  // A compact brushed-steel dispenser: thin mounting bezel, smooth elbow,
+  // and a short dark lever. Shared sweep rings avoid intersecting pipe joints.
+  const mount = (profile, color) => {
+    const start = tap.count;
+    tap.lathe(profile, color, 1, 7, 48);
+    for (let i = start; i < tap.count; i++) {
+      const at = i * 13, x = tap.vertices[at], axis = tap.vertices[at + 1];
+      const nx = tap.vertices[at + 3], ny = tap.vertices[at + 4];
+      tap.vertices[at] = -axis; tap.vertices[at + 1] = .19 + x; tap.vertices[at + 2] += sz;
+      tap.vertices[at + 3] = -ny; tap.vertices[at + 4] = nx;
+    }
+  };
+  mount([[.032,.481],[.049,.486],[.051,.492],[.049,.501],[.033,.507]], dark);
+  mount([[.033,.500],[.046,.504],[.047,.510],[.043,.517],[.030,.523]], metal);
+  const path = [[-.512,.19,-1,0],[-.565,.19,-1,0],[-.595,.19,-1,0]];
+  for (let i = 1; i <= 16; i++) {
+    const a = i / 16 * Math.PI / 2;
+    path.push([sx + .065 - .065 * Math.sin(a), .125 + .065 * Math.cos(a), -Math.cos(a), -Math.sin(a)]);
+  }
+  path.push([sx,sy+.006,0,-1]);
+  const ring = ([x,y,dx,dy], a, radius) => [x-dy*Math.cos(a)*radius,y+dx*Math.cos(a)*radius,sz+Math.sin(a)*radius];
+  for (let i=0;i<path.length-1;i++) for(let k=0;k<40;k++) {
+    const a=k/40*Math.PI*2,b=(k+1)/40*Math.PI*2;
+    const p=ring(path[i],a,.041),q=ring(path[i],b,.041),r=ring(path[i+1],b,.041),s=ring(path[i+1],a,.041);
+    const n=([,,dx,dy],angle)=>[-dy*Math.cos(angle),dx*Math.cos(angle),Math.sin(angle)];
+    for(const [point,normal] of [[p,n(path[i],a)],[q,n(path[i],b)],[r,n(path[i+1],b)],
+      [p,n(path[i],a)],[r,n(path[i+1],b)],[s,n(path[i+1],a)]]) tap.vertex(point,normal,metal,1,7);
+  }
+  tap.tube([[-.552,.19,sz],[-.552,.234,sz]],[.016,.014],metal,7,24);
+  tap.tube([[-.552,.232,sz],[-.552,.249,sz],[-.615,.249,sz]],[.015,.015,.010],dark,0,24);
   const start = tap.count;
-  tap.lathe([[.046, sy + .018], [.05, sy + .006], [.043, sy], [.042, sy + .008]], metal, 1, 0, 32);
+  tap.lathe([[.041,sy+.014],[.046,sy+.008],[.045,sy+.003],[.043,sy],[.040,sy+.004],[.040,sy+.012]], metal, 1, 7, 40);
   for (let i = start; i < tap.count; i++) {
     tap.vertices[i * 13] += SPOUT[0];
     tap.vertices[i * 13 + 2] += SPOUT[2];
   }
-  const center = [sx, sy + .009, sz];
-  for (let i = 0; i < 32; i++) {
-    const a = i / 32 * Math.PI * 2, b = (i + 1) / 32 * Math.PI * 2;
-    tap.triangle(center, [sx + Math.cos(a) * .042, center[1], sz + Math.sin(a) * .042], [sx + Math.cos(b) * .042, center[1], sz + Math.sin(b) * .042], [.055, .043, .028]);
+  const center = [sx, sy + .013, sz];
+  for (let i = 0; i < 40; i++) {
+    const a = i / 40 * Math.PI * 2, b = (i + 1) / 40 * Math.PI * 2;
+    tap.triangle(center, [sx + Math.cos(a) * .040, center[1], sz + Math.sin(a) * .040], [sx + Math.cos(b) * .040, center[1], sz + Math.sin(b) * .040], [.035, .045, .045]);
   }
   return tap;
 }
@@ -189,9 +212,9 @@ export function buildFilm(mesh, sim) {
       const density = (a.density + b.density + c.density) / 3;
       const matureRatio = clamp((a.mature + b.mature + c.mature) / Math.max(.02, density * 3), 0, 1);
       const blister = (a.blister + b.blister + c.blister) / 3;
-      topColor[0] = clamp(.93 - matureRatio * .09 + blister * .04, 0, 1);
-      topColor[1] = clamp(.87 - matureRatio * .13 + blister * .05, 0, 1);
-      topColor[2] = clamp(.73 - matureRatio * .22 + blister * .08, 0, 1);
+      topColor[0] = clamp(.85 - matureRatio * .08 + blister * .04, 0, 1);
+      topColor[1] = clamp(.82 - matureRatio * .10 + blister * .04, 0, 1);
+      topColor[2] = clamp(.71 - matureRatio * .14 + blister * .06, 0, 1);
       bottomColor[0] = .64 - matureRatio * .10;
       bottomColor[1] = .46 - matureRatio * .09;
       bottomColor[2] = .24 - matureRatio * .06;

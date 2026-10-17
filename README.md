@@ -17,10 +17,12 @@ Open the URL printed by the server. To serve the production build, run `node scr
 ## Interact
 
 - Drag to orbit the perspective camera; drag vertically to change elevation. Arrow keys also move the camera. **R** resets it.
-- **Shift-drag** physically tips the jar. **Jar & view** provides the same controls for touch and keyboard. Tipping changes gravity and the liquid surface, independently of the camera.
+- **Shift-drag** physically tips the jar in both directions relative to the current camera. **View & session → Tilt jar** enables tipping by touch or plain dragging; Shift + arrow keys also tip. Set upright restores both axes. Tipping changes gravity and the liquid surface, independently of the camera.
 - **Swirl / W** adds rotational momentum to the liquid. The mother can drift, turn and bend with the currents; tea impacts dent it and it rebounds.
 - **Pour hot tea / H** adds 8% of capacity at 70°C. The temperature front can soften the film and injure exposed cells.
-- **Drain / add tea** opens recipe and volume controls. Each phase takes about 1–3 seconds. Outlet speed depends on liquid head, and detached drops follow gravity.
+- **Tea recipe & care** opens recipe and volume controls. Swirl, hot pour, draw and feed actions sit in the control rail, clear of the vessel. Each phase takes about 1–3 seconds. Outlet speed depends on liquid head, and detached drops follow gravity.
+- Two tracking voxels follow one yeast and one acetic acid bacterium by ID. A ring and ID identify the target among actual neighboring cells, with a moving spatial grid, a recorded path, and a small jar locator. Labeled molecular shapes flow toward the cell for uptake and away for products, driven by that cell's actual metabolism. If it leaves the culture, the view acquires the nearest survivor of the same species. Drag each cube to rotate it; **Cells** enlarges both views.
+- Presets and environment sliders live in **Conditions**. Less-used playback, theme and new-vessel controls live in **View & session**.
 - Choose a field to inspect organisms, flow, temperature or individual dissolved chemicals. The main view fills the available space; clicking opens no zoom overlay.
 - **Space** pauses; **S** steps; **F** cycles biological speed; **V** cycles fields; **C / E** opens Conditions / exchange; **T** changes theme; **N** starts a new culture after confirmation.
 
@@ -36,7 +38,9 @@ Desktop grids have 22 × 30 × 8 cells; phone grids have 16 × 24 × 5. A closed
 
 The pellicle keeps its material inventory, elastic deformation and vertical inertia. A phenomenological wet-load model places thicker, larger and cooler sheets deeper in the liquid; retained gas supports them. Bubbles intercept its actual submerged underside. An explicit body pose adds horizontal translation, rotation and momentum in the circular vessel. Gas collects below intact material and must reach a lifted edge before escaping. The rendered contour has a top, underside and thin exposed edge; its texture follows the material.
 
-One WebGL scene draws the jar, water, film, particles, bubbles, brass tap and airborne streams with a shared perspective camera and depth buffer. Glass and tea refract the rendered scene. The jar has separate inner and outer walls, a curved shoulder, rolled mouth and heavy foot. Point sprites retain readable pixel sizes and opacity; they follow the solver without carrying extra chemical mass. The remaining Canvas presents that scene at its displayed size. Tea absorbs light instead of receiving a cloudy tint; trails appear in Flow view.
+One WebGL scene draws the jar, water, film, particles, bubbles, steel spigot and airborne streams with a shared perspective camera and depth buffer. Glass and tea refract the rendered scene. The jar has separate inner and outer walls, a curved shoulder, rolled mouth and heavy foot. The spigot uses continuous sweep rings through its elbow, with a compact mounting bezel and an open bore aligned with the discharged stream. Point sprites retain readable pixel sizes and opacity; they follow the solver without carrying extra chemical mass. The remaining Canvas presents that scene at its displayed size.
+
+The default Liquid view emphasizes amber yeast and teal bacteria over quiet neutral flow tracers. Chemical fields show one substance at a time; Organisms adds sparse reaction and cross-feeding paths. Rings link the vessel to the two tracked cells. Visual offsets, full sprite radii, and trail segments are contained within the glass and liquid; airborne transfer droplets remain free to travel outside it.
 
 The liquid surface is a height field over a coarse 3D solver. It cannot overturn or resolve splashes and air/liquid topology. Stream breakup and bubble optics are bounded approximations. The mother remains one connected material system; it does not tear into independent fragments. Chemistry is illustrative, not calibrated brewing guidance.
 

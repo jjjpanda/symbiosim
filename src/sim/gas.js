@@ -2,7 +2,7 @@ import { clamp } from './constants.js';
 import { impulseSurface } from './surface.js';
 import { canopyGap, collectPockets, pocketOutlet, spreadPocketLoad } from './pockets.js';
 import { worldFilm } from './film-body.js';
-import { vesselTilt } from './vessel.js';
+import { vesselGravity } from './vessel.js';
 
 export function releaseGas(sim, column) {
   if (worldFilm(sim).density[column] > 0) return;
@@ -41,14 +41,14 @@ export function stepGas(sim, dt, motionDt) {
     }
   }
   let rising = 0;
-  const tilt = vesselTilt(sim), gravityX = Math.sin(tilt), gravityY = Math.cos(tilt);
+  const [gravityX, gravityY, gravityZ] = vesselGravity(sim);
   const velocity = sim.gasVelocity ||= [0, 0, 0];
   for (const bubble of gas.bubbles) {
     const previousY = bubble.y;
     const [vx, vy, vz] = sim.velocity(bubble.x, bubble.y, velocity, bubble.z);
     const rise = .4 + .7 * bubble.size * bubble.size;
     bubble.x = clamp(bubble.x + (vx * .35 - gravityX * rise) * motionDt, .015, .985);
-    bubble.z = clamp((bubble.z ?? .5) + vz * motionDt * .35, .015, .985);
+    bubble.z = clamp((bubble.z ?? .5) + (vz * .35 - gravityZ * rise) * motionDt, .015, .985);
     // Small bubbles can be entrained by the inlet; larger merged bubbles
     // escape faster. Size is a tracer radius, not a thermodynamic gas mass.
     bubble.y += (vy * .75 - gravityY * rise) * motionDt;
