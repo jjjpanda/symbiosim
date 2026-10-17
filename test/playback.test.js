@@ -115,11 +115,68 @@ test('exchange display time follows hydraulic head and amount independently of b
     while (sim.care.transfer) { now += 1000 / 60; view.frame(now); }
     assert.ok(Math.abs((now - drained) / 1000 - pourSeconds) < .1);
     assert.ok(Math.abs(sim.volume - .72) < 1e-9);
-    let resumed;
-    view.advance = days => { resumed = days; };
+    let resumed = 0;
+    view.advance = days => { resumed += days; };
     for (let i = 0; i < 3; i++) { now += 1000 / 60; view.frame(now); }
-    assert.ok(Math.abs(resumed - (1 / 30) * speed / 60) < 1e-9);
+    assert.ok(Math.abs(resumed - .05 * speed / 60) < 1e-9);
   }
+});
+
+test('60 Hz playback renders each updated frame and skips the vessel behind History', () => {
+  let draws = 0, days = 0;
+  const detail = { open: false };
+  const view = Object.assign(Object.create(SymbiosimVessel.prototype), {
+    sim: { playing: true, speed: 12, care: {} }, $: () => detail,
+    advance: dt => { days += dt; }, draw: () => { draws++; }, updateReadings() {}
+  });
+  view.frame(10000);
+  for (let i = 1; i <= 60; i++) view.frame(10000 + i * 1000 / 60 - (i % 2 ? .4 : 0));
+  assert.equal(draws, 60, 'The update gate must not cap a 60 Hz display at 30 FPS');
+  assert.ok(Math.abs(days - .2) < 1e-9, 'Higher frame rate must preserve biological pace');
+  detail.open = true;
+  view.frame(10000 + 61 * 1000 / 60);
+  assert.equal(draws, 60);
+  assert.ok(days > .2);
+  view.sim.playing = false;
+  view.frame(10000 + 62 * 1000 / 60);
+  assert.equal(draws, 60);
+});
+
+test('History rebuilds only for new observations and leaves the culture unchanged', () => {
+  const nodes = new Map(); let builds = 0;
+  const node = selector => {
+    if (!nodes.has(selector)) nodes.set(selector, {
+      viewBox: { baseVal: { width: 320, height: 160 } }, setAttribute() {},
+      set innerHTML(value) { builds++; this.markup = value; }
+    });
+    return nodes.get(selector);
+  };
+  const sim = new Simulation({ width: 8, height: 8, depth: 1 });
+  const view = Object.assign(Object.create(SymbiosimVessel.prototype), {
+    sim, $: node, palette: { warm: '#a74', cool: '#487', gas: '#789' }
+  });
+  const before = sim.snapshot();
+  view.updateDetail(); assert.equal(builds, 8);
+  view.updateDetail(); assert.equal(builds, 8);
+  assert.deepEqual(sim.snapshot(), before);
+  sim.fields.ethanol.fill(2); sim.record(); view.updateDetail();
+  assert.equal(builds, 16);
+  assert.equal(node('#history-reading-ethanol').textContent, '2.00');
+});
+
+test('manual tea actions use the configured recipe without resuming a paused culture', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel(); view.draw = () => {};
+    view.palette = { warm: '#a74', cool: '#487' }; view.sim.playing = false;
+    for (const [id, value] of [['pour-amount', '10'], ['tea-temp', '40'], ['tea-sugar', '60']]) view.$('#' + id).value = value;
+    view.$('#pour').onclick();
+    assert.equal(view.sim.playing, false);
+    assert.deepEqual(view.sim.care.transfer.recipe, { temperature: 40, sugar: 60 });
+    assert.equal(view.sim.care.transfer.total, .1);
+    view.command('w'); assert.equal(view.sim.playing, false);
+  } finally { globalThis.matchMedia = previousMedia; }
 });
 
 test('real frame loop keeps cells moving and drives evolving currents during both exchange phases', () => {

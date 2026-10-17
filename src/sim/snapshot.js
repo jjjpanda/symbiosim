@@ -70,7 +70,8 @@ export function validateSnapshot(data) {
   if (!finite(data.headspace?.oxygen, 0, .21) || !finite(data.headspace?.co2, 0, 10)) throw new Error('Invalid headspace');
   if (!Array.isArray(data.history) || !data.history.length || data.history.length > 240 || data.history.some((point, index) =>
     !point || !finite(point.day, 0, data.day) || (index > 0 && point.day < data.history[index - 1].day) ||
-    ['sugar', 'ph', 'yeast', 'bacteria', 'temperature'].some(key => !finite(point[key], 0)))) throw new Error('Invalid vessel history');
+    ['sugar', 'ph', 'yeast', 'bacteria', 'temperature'].some(key => !finite(point[key], 0)) ||
+    ['oxygen', 'co2', 'ethanol', 'acid'].some(key => point[key] !== undefined && !finite(point[key], 0)))) throw new Error('Invalid vessel history');
   if (data.gas !== undefined) {
     const g = data.gas;
     if (!g || !finite(g.credit, 0, .018) || !Number.isInteger(g.nextId) || g.nextId < 1 ||

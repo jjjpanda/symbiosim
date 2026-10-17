@@ -1,7 +1,7 @@
 import { Simulation, PRESETS, REGIMES } from './engine.js';
 import { draw } from './renderer.js';
 import { vesselTemplate, OVERLAYS } from './template.js';
-import { chartSeries, drawChart, historyWindow, readingDeltas } from './charts.js';
+import { HISTORY_CHARTS, drawChart, historyWindow, readingDeltas, formatChartValue } from './charts.js';
 import { advanceParticles } from './render/particles.js';
 import { exchangeSpeed } from './sim/transfer-clock.js';
 import { bindCamera, defaultCamera, turnCamera, tipVessel } from './render/camera.js';
@@ -67,7 +67,7 @@ export class SymbiosimVessel extends HTMLElement {
   isDark() { return this.getAttribute('theme') === 'dark' || (!this.hasAttribute('theme') && this.dark.matches); }
   readPalette() {
     const style = getComputedStyle(this);
-    this.palette = Object.fromEntries(['fg', 'warm', 'cool'].map(key => [key, style.getPropertyValue('--' + key).trim()]));
+    this.palette = Object.fromEntries(['fg', 'warm', 'cool', 'gas'].map(key => [key, style.getPropertyValue('--' + key).trim()]));
     this.updateReadings(); this.draw();
   }
   announce(text) { this.$('[role=status]').textContent = text; }
@@ -145,13 +145,10 @@ export class SymbiosimVessel extends HTMLElement {
     }
     const transfer = (phase, amount, recipe = { temperature: value('tea-temp'), sugar: value('tea-sugar') }) => {
       const accepted = this.sim.startTransfer(phase, amount, recipe);
-      if (accepted) { this.sim.playing = true; this.$('#panel').close?.(); }
       this.intervene(accepted, phase === 'drain' ? 'Drawing' : 'Pouring tea');
     };
     this.$('#drain').onclick = () => transfer('drain', value('drain-amount') / 100);
     this.$('#pour').onclick = () => transfer('pour', value('pour-amount') / 100);
-    this.$$('[data-action="quick-drain"]').forEach(btn => btn.onclick = () => transfer('drain', .2));
-    this.$$('[data-action="quick-feed"]').forEach(btn => btn.onclick = () => transfer('pour', .15, { temperature: 28, sugar: 90 }));
     this.$('#starter').onclick = () => this.intervene(this.sim.addStarter(value('starter-amount') / 100, value('starter-balance') / 100), 'Added starter');
     this.$('#skim').onclick = () => {
       const removed = this.sim.skimPellicle();
@@ -161,7 +158,10 @@ export class SymbiosimVessel extends HTMLElement {
     this.$('#close-panel').onclick = () => this.$('#panel').close();
     this.$$('dialog').forEach(dialog => dialog.onclick = e => { if (e.target !== dialog) return; const box = dialog.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) dialog.close(); });
     this.$$('[data-close]').forEach(button => button.onclick = () => this.$('#detail').close());
-    this.$$('[data-chart]').forEach(button => button.onclick = () => { this.detailKind = button.dataset.chart; this.updateDetail(); this.$('#detail').showModal(); });
+    this.$$('[data-chart]').forEach(button => button.onclick = () => {
+      this.updateDetail(); this.$('#detail').showModal();
+      this.$('#history-title-' + button.dataset.chart)?.scrollIntoView({ block: 'nearest' });
+    });
     bindCamera(this); this.updateCamera();
   }
 
@@ -176,17 +176,16 @@ export class SymbiosimVessel extends HTMLElement {
     else if (key === 'r') { Object.assign(this.camera, defaultCamera()); this.updateCamera(); }
     else if (key === ' ') { this.sim.playing = !this.sim.playing; }
     else if (key === 's') { this.sim.playing = false; this.advance(.08); }
-    else if (key === 'w') { this.sim.stir(); this.sim.playing = true; this.announce('Swirling the tea.'); }
+    else if (key === 'w') { this.sim.stir(); this.announce('Swirling the tea.'); }
     else if (key === 'h') {
       const accepted = this.sim.startTransfer('pour', .08, { temperature: 70, sugar: this.sim.care.sugar });
-      if (accepted) this.sim.playing = true;
       this.intervene(accepted, 'Pouring hot tea at 70°C');
     }
     else if (key === 'n') {
       if (!confirm('Start a new vessel? The current culture will be replaced.')) return true;
       this.sim = new Simulation({ seed: seed(), width: this.sim.nx, height: this.sim.ny, depth: this.sim.nz });
       this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
-      this.pending = 0; this.particles = null; this.activePreset = 'balanced'; this.updateControls();
+      this.pending = 0; this.particles = null; this.activePreset = null; this.updateControls();
     }
     else if (key === 't') this.setAttribute('theme', this.isDark() ? 'light' : 'dark');
     else if (key === 'c' || key === 'e') { this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
@@ -196,7 +195,7 @@ export class SymbiosimVessel extends HTMLElement {
     this.updateReadings(); this.draw(); return true;
   }
 
-  intervene(amount, action) { this.announce(amount ? `${action}: ${Math.round(amount * 100)}% of capacity.` : 'No volume available.'); this.updateReadings(); this.draw(); }
+  intervene(amount, action) { this.announce(amount ? `${action}: ${Math.round(amount * 100)}% of capacity.${this.sim.playing ? '' : ' Paused; Resume or Step to advance.'}` : 'No volume available.'); this.updateReadings(); this.draw(); }
   updateCamera() {
     const tilt = Math.abs(vesselTilt(this.sim));
     this.$('#jar-tilt-output').value = `${Math.round(tilt * 180 / Math.PI)}° tilt`;
@@ -220,15 +219,14 @@ export class SymbiosimVessel extends HTMLElement {
       button.setAttribute?.('aria-pressed', String(active));
     });
     for (const [id, input, unit] of OUTPUTS) this.$('#' + id + '-output').value = this.$('#' + input).value + unit;
+    for (const id of ['pour', 'drain']) this.$('#' + id).textContent = `${id === 'pour' ? 'Pour' : 'Drain'} ${this.$('#' + id + '-amount').value}%`;
   }
 
-  series(kind, window) { return chartSeries(this.sim.history, kind, window); }
   chart(svg, kind, window) { drawChart(svg, this.sim.history, kind, this.palette, window); }
   updateReadings() {
     if (this.camera) this.updateCamera();
     const s = this.sim, counts = s.counts();
     for (const id of ['drain', 'pour', 'starter']) this.$('#' + id).disabled = Boolean(s.care.transfer);
-    this.$$('[data-action]').forEach(btn => btn.disabled = Boolean(s.care.transfer));
     const film = pellicleStats(s);
     const immersion = film.depth * (4 / 3) * 100;
     const position = !film.area ? 'no film' : immersion > .8 ? 'submerged' : immersion > .2 ? 'partly submerged' : 'at surface';
@@ -265,18 +263,21 @@ export class SymbiosimVessel extends HTMLElement {
       this.chartSample = lastSample;
       this.chartPalette = this.palette;
     }
-    if (this.$('#detail').open) this.updateDetail(film);
+    if (this.$('#detail').open) this.updateDetail();
   }
-  updateDetail(film = pellicleStats(this.sim)) {
+  updateDetail() {
+    const history = this.sim.history, sample = history.at(-1);
+    if (this.detailHistory === history && this.detailSample === sample && this.detailPalette === this.palette) return;
     const window = historyWindow(this.sim.history);
-    this.$('#detail-title').textContent = this.detailKind[0].toUpperCase() + this.detailKind.slice(1);
-    this.chart(this.$('#detail-chart'), this.detailKind, window);
-    this.$('#chart-start').textContent = `day ${fmt(window.start)}`;
-    this.$('#chart-end').textContent = `day ${fmt(window.end)}`;
-    const units = { temperature: '°C', yeast: 'cells', bacteria: 'cells', sugar: 'g/L', ph: 'pH' };
-    this.$('#detail-legend').innerHTML = this.series(this.detailKind, window).map(([key, min, max, color]) => `<span class="${color}">${key === 'ph' ? 'pH' : key} · ${min}–${fmt(max, key === 'ph' ? 1 : 0)} ${units[key]}</span>`).join('');
-    this.$('#detail-chart').setAttribute('aria-label', `${this.detailKind} history from day ${fmt(window.start)} to ${fmt(window.end)}. Scales are listed above.`);
-    this.$('#detail-copy').textContent = this.detailKind === 'temperature' ? `Current room temperature ${fmt(this.sim.ambient())}°C.` : this.detailKind === 'culture' ? `Modeled cells · pellicle ${Math.round(film.area * 100)}% coverage · headspace O₂ ${fmt(this.sim.headspace.oxygen * 100)}%.` : `Sugar and pH use separate scales. Current ethanol ${fmt(this.sim.mean('ethanol'), 2)} g/L.`;
+    this.$('#history-window').textContent = `Days ${fmt(window.start, 2)}–${fmt(window.end, 2)} · latest recorded readings · up to 240 retained samples`;
+    for (const { kind, title, unit } of HISTORY_CHARTS) {
+      const svg = this.$('#history-chart-' + kind);
+      drawChart(svg, history, kind, this.palette, window, true);
+      svg.setAttribute('aria-label', `${title}, day ${fmt(window.start, 2)} to ${fmt(window.end, 2)}; ${unit}.`);
+      const keys = kind === 'culture' ? ['yeast', 'bacteria'] : [kind];
+      this.$('#history-reading-' + kind).textContent = keys.map(key => `${formatChartValue(sample?.[key], key)}${kind === 'culture' ? ' ' + key : ''}`).join(' · ');
+    }
+    this.detailHistory = history; this.detailSample = sample; this.detailPalette = this.palette;
   }
   resize() {
     const ratio = this.ratio = Math.min(devicePixelRatio || 1, 2);
@@ -295,7 +296,8 @@ export class SymbiosimVessel extends HTMLElement {
     const elapsed = this.lastFrame ? Math.min(.1, (time - this.lastFrame) / 1000) : 0; this.lastFrame = time;
     this.pending = this.sim.playing && !document.hidden ? (this.pending || 0) + elapsed : 0;
     let advanced = false;
-    if (this.pending >= .025) {
+    // Leave room for normal RAF timing jitter without halving a 60 Hz display.
+    if (this.pending >= .0125) {
       // Exchanges use a short event clock, independent of biological pace.
       // Fluid and organisms keep moving throughout each phase.
       const speed = this.sim.care.transfer ? exchangeSpeed(this.sim) : this.sim.speed;
@@ -307,7 +309,7 @@ export class SymbiosimVessel extends HTMLElement {
       if (time - (this.lastUi || 0) > 150) { this.updateReadings(); this.lastUi = time; }
       // A second draw of an unchanged solver state repeats every GPU pass,
       // film sort and particle projection. Controls request their own redraw.
-      if (advanced) this.draw();
+      if (advanced && !this.$?.('#detail')?.open) this.draw();
     }
     this.frameHandle = requestAnimationFrame(t => this.frame(t));
   }
@@ -317,8 +319,10 @@ export class SymbiosimVessel extends HTMLElement {
     for (const [type, canvas] of Object.entries(this.voxelCanvases)) {
       const info = renderVoxel(canvas, this.sim, this.voxels[type], this.isDark(), this.motion);
       if (!info) continue;
-      this.$('#' + type + '-coords').textContent = info.coords;
-      this.$('#' + type + '-summary').textContent = info.summary;
+      for (const key of ['coords', 'summary']) {
+        const label = this.$('#' + type + '-' + key);
+        if (label.textContent !== info[key]) label.textContent = info[key];
+      }
       if (info.replaced) this.announce(`Following another ${type === 'yeast' ? 'yeast' : 'acetic acid bacterium'}; the previous cell is no longer in the vessel.`);
     }
   }

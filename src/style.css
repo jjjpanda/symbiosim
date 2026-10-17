@@ -82,8 +82,6 @@ button svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentC
   padding: 10px 13px;
   background: linear-gradient(155deg, #ffffff28, transparent 55%, #b8e2eb12), var(--card);
   box-shadow: inset 0 1px 0 #ffffff45, 0 6px 20px -12px var(--shadow);
-  backdrop-filter: blur(18px) saturate(1.35);
-  -webkit-backdrop-filter: blur(18px) saturate(1.35);
 }
 .layout {
   display: grid;
@@ -148,7 +146,7 @@ nav button { display: inline-flex; align-items: center; justify-content: center;
 .field { grid-area: field; position: relative; isolation: isolate; justify-self: center; align-self: stretch; width: 100%; height: 100%; min-height: 420px; overflow: hidden; }
 #canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
 #canvas:active { cursor: grabbing; }
-.fluid-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.fluid-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .fluid-actions button { min-height: 40px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 12px; text-align: center; font-size: 12px; }
 .fluid-actions button:hover:not(:disabled) { background: color-mix(in srgb, var(--cool) 15%, var(--glass)); }
 .view-actions, .session-actions { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0; }
@@ -234,11 +232,20 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
 .panel-note { margin: 22px 0 0; }
 .panel summary { cursor: pointer; min-height: 32px; font-weight: 560; }
 .reaction-key { display: grid; gap: 10px; margin-top: 16px; font: 11px/1.7 ui-monospace, Consolas, Menlo, monospace; }
-#detail > button { float: right; }
-#detail-legend { display: grid; gap: 6px; margin-top: 20px; font-size: 12px; }
-#detail-chart { display: block; width: 100%; height: 180px; margin: 20px 0 6px; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to top, transparent 0 44px, var(--line) 44px 45px); }
-.chart-axis { display: flex; justify-content: space-between; font: 10px ui-monospace, Consolas, Menlo, monospace; color: var(--muted); }
-#detail-copy { font-size: 12px; line-height: 1.7; color: var(--muted); }
+.action-status { margin: 0; color: var(--muted); font-size: 11px; }
+.history-dialog { width: min(1100px, calc(100vw - 28px)); background: var(--bg); }
+.history-dialog .panel-top { position: sticky; top: -28px; z-index: 1; padding-block: 8px; background: var(--bg); }
+.history-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.history-card { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.history-card h3 { margin: 0; font-size: 13px; scroll-margin-top: 64px; }
+.history-card h3 small { color: var(--muted); font-size: 11px; font-weight: normal; }
+.history-card output { display: block; margin-block: 5px; font: 16px ui-monospace, monospace; white-space: normal; }
+.history-card svg { display: block; width: 100%; height: auto; overflow: visible; }
+.history-card .hint { margin: 4px 0 0; font-size: 11px; }
+.chart-tick { fill: var(--muted); font: 10px ui-monospace, monospace; }
+.chart-gridline { stroke: var(--line); }
+@media (max-width: 900px) { .history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 540px) { .history-grid { grid-template-columns: minmax(0, 1fr); } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 :host([transparent]) .instruments, :host([transparent]) .left-rail { background: var(--glass); border-radius: 24px; padding: 16px; backdrop-filter: blur(24px); }
 @container (max-width: 1100px) {
@@ -300,6 +307,7 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
   .panel-top button, [data-close] { min-width: 44px; min-height: 44px; }
 }
 @container (max-width: 380px) {
+  nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .play-button { min-width: 92px; }
   .identity p { font-size: 10px; }
 }

@@ -19,10 +19,10 @@ Open the URL printed by the server. To serve the production build, run `node scr
 - Drag to orbit the perspective camera; drag vertically to change elevation. Arrow keys also move the camera. **R** resets it.
 - **Shift-drag** physically tips the jar in both directions relative to the current camera. **View & session → Tilt jar** enables tipping by touch or plain dragging; Shift + arrow keys also tip. Set upright restores both axes. Tipping changes gravity and the liquid surface, independently of the camera.
 - **Swirl / W** adds rotational momentum to the liquid. The mother can drift, turn and bend with the currents; tea impacts dent it and it rebounds.
-- **Pour hot tea / H** adds 8% of capacity at 70°C. The temperature front can soften the film and injure exposed cells.
-- **Tea recipe & care** opens recipe and volume controls. Swirl, hot pour, draw and feed actions sit in the control rail, clear of the vessel. Each phase takes about 1–3 seconds. Outlet speed depends on liquid head, and detached drops follow gravity.
+- **H** adds 8% of capacity at 70°C. The temperature front can soften the film and injure exposed cells.
+- **Tea recipe & care** opens recipe and volume controls. Pour, Drain and Swirl sit in the control rail; Skim sits beside the film readings. Actions preserve Pause; Resume or Step advances a queued transfer. Each phase takes about 1-3 seconds. Outlet speed depends on liquid head, and detached drops follow gravity.
 - Two tracking voxels follow one yeast and one acetic acid bacterium by ID. A ring and ID identify the target among actual neighboring cells, with a moving spatial grid, a recorded path, and a small jar locator. Labeled molecular shapes flow toward the cell for uptake and away for products, driven by that cell's actual metabolism. If it leaves the culture, the view acquires the nearest survivor of the same species. Drag each cube to rotate it; **Cells** enlarges both views.
-- Presets and environment sliders live in **Conditions**. Less-used playback, theme and new-vessel controls live in **View & session**.
+- Pause and Step sit together in the header. Presets and environment sliders live in **Conditions**; theme and new-vessel controls live in **View & session**. **History** shows eight labeled graphs with independent value scales and the latest recorded readings.
 - Choose a field to inspect organisms, flow, temperature or individual dissolved chemicals. The main view fills the available space; clicking opens no zoom overlay.
 - **Space** pauses; **S** steps; **F** cycles biological speed; **V** cycles fields; **C / E** opens Conditions / exchange; **T** changes theme; **N** starts a new culture after confirmation.
 
