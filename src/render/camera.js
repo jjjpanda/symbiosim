@@ -55,4 +55,11 @@ export function bindCamera(view) {
   view.$('#reset-camera').onclick = () => { Object.assign(view.camera, defaultCamera()); changed(); };
   view.$('#tilt-mode').onclick = () => { view.tiltMode = !view.tiltMode; changed(); };
   view.$('#upright-jar').onclick = () => { view.sim.vessel.tilt = 0; view.sim.vessel.tiltZ = 0; changed(); };
+  view.$$?.('[data-camera]').forEach(button => button.onclick = () => {
+    const horizontal = button.dataset.camera === 'left' ? -1 : button.dataset.camera === 'right' ? 1 : 0;
+    const vertical = button.dataset.camera === 'up' ? -1 : button.dataset.camera === 'down' ? 1 : 0;
+    if (view.tiltMode) tipVessel(view, horizontal * 2, vertical * 2);
+    else turnCamera(view.camera, horizontal * 10, -vertical * 3);
+    changed();
+  });
 }

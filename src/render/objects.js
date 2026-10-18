@@ -7,6 +7,7 @@ import { filmPoint } from '../sim/film-body.js';
 import { phFromAcids } from '../sim/chemistry.js';
 import { SPOUT } from './streams.js';
 import { CHEMICAL_COLORS } from '../metabolism.js';
+import { temperatureRange } from './palette.js';
 const WATER_COLS = 64, WATER_LEVELS = 10;
 const WATER_RIM = Array.from({ length: WATER_COLS + 1 }, (_, col) => {
   const angle = col / WATER_COLS * Math.PI * 2;
@@ -96,7 +97,7 @@ export function buildWater(mesh, sim, overlay = 'liquid') {
     const rim = WATER_RIM[col];
     waterHeight[col] = (sim.volume - sampleSurface(sim, sim.surface.displacement, rim.u, rim.v)) * HEIGHT;
   }
-  const meanTemp = sim.meanTemperature();
+  const meanTemp = sim.meanTemperature(), thermal = overlay === 'temperature' ? temperatureRange(sim) : null;
   const p = [0, 0, 0], q = [0, 0, 0], r = [0, 0, 0], s = [0, 0, 0], color = [0, 0, 0];
   for (let row = 0; row < WATER_LEVELS; row++) {
     const y0 = 1 - row / WATER_LEVELS, y1 = 1 - (row + 1) / WATER_LEVELS, ym = (row + .5) / WATER_LEVELS;
@@ -108,7 +109,7 @@ export function buildWater(mesh, sim, overlay = 'liquid') {
       s[0] = a.x; s[1] = wa * y1; s[2] = a.z;
       const uv = WATER_MID_UV[col], field = sim.index(uv[0], ym, uv[1]);
       const localTemp = sim.temperature[field];
-      const heat = clamp((localTemp - meanTemp) * .45 + (localTemp - sim.settings.room) / 22, -1, 1);
+      const heat = thermal ? clamp((localTemp - thermal.centre) / thermal.extent, -1, 1) : clamp((localTemp - meanTemp) * .45 + (localTemp - sim.settings.room) / 22, -1, 1);
       const localPh = phFromAcids(sim.fields.acetic[field], sim.fields.gluconic[field]);
       teaColor(localPh, heat, overlay, color);
       mesh.vertex(p, a.normal, color, .14, 2);
@@ -128,7 +129,7 @@ export function buildWater(mesh, sim, overlay = 'liquid') {
       liquidPosition(sim, x / size, 0, (z + 1) / size, s);
       const field = sim.index((x + .5) / size, .04, (z + .5) / size);
       const localTemp = sim.temperature[field];
-      const heat = clamp((localTemp - meanTemp) * .45 + (localTemp - sim.settings.room) / 22, -1, 1);
+      const heat = thermal ? clamp((localTemp - thermal.centre) / thermal.extent, -1, 1) : clamp((localTemp - meanTemp) * .45 + (localTemp - sim.settings.room) / 22, -1, 1);
       const localPh = phFromAcids(sim.fields.acetic[field], sim.fields.gluconic[field]);
       teaColor(localPh, heat, overlay, color);
       color[0] = Math.min(1, color[0] * 1.12 + .04);

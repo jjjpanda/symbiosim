@@ -296,6 +296,45 @@ test('manual pellicle skimming remains enabled for thin material below the visua
   }
 });
 
+test('room input refreshes the temperature legend immediately while paused', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel();
+    view.draw = () => {};
+    view.isDark = () => false;
+    view.sim.playing = false;
+    view.selectField('temperature');
+    assert.equal(view.$('#field-low').textContent, '22.0°C');
+    assert.equal(view.$('#field-high').textContent, '26.0°C');
+
+    view.$('#room').oninput({ target: { value: '35' } });
+
+    assert.equal(view.$('#field-low').textContent, '24.0°C');
+    assert.equal(view.$('#field-high').textContent, '46.0°C');
+    assert.match(view.$('#field-reading').textContent, /35\.0°C room average/);
+    assert.equal(view.sim.playing, false);
+    assert.equal(view.sim.day, 0);
+  } finally { globalThis.matchMedia = previousMedia; }
+});
+
+test('permeability input controls the full range after a sealed setting and keeps output synchronized', () => {
+  const previousMedia=globalThis.matchMedia;
+  globalThis.matchMedia=()=>({matches:false});
+  try {
+    const view=new SymbiosimVessel();
+    view.draw=()=>{};
+    view.isDark=()=>false;
+    view.sim.applySettings({cover:'sealed'});
+    for(const percent of [0,37,100]) {
+      view.$('#permeability').oninput({target:{value:String(percent)}});
+      assert.equal(view.sim.settings.permeability,percent/100);
+      assert.equal(view.sim.settings.cover,'open','No hidden sealed-cover factor may override the slider');
+      assert.equal(view.$('#permeability-output').value,percent+'%');
+    }
+  } finally { globalThis.matchMedia=previousMedia; }
+});
+
 test('all presets apply valid covers, keep simulation state finite, and reject invalid settings', () => {
   const sim = new Simulation();
   for (const name of Object.keys(REGIMES)) {

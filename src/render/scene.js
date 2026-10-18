@@ -1,13 +1,13 @@
 import { createProgram } from './webgl.js';
 import { meshVertex, meshFragment, particleVertex, particleFragment } from './scene-shaders.js';
 import { Geometry, STRIDE } from './geometry.js';
-import { createJar, createTap, buildWater, buildFilm, fieldColor } from './objects.js';
+import { createJar, createTap, buildWater, buildFilm, fieldColor, teaColor } from './objects.js';
 import { cameraMatrix, liquidPosition, containInLiquid, discToMaterial, HEIGHT } from './space.js';
 import { buildStreams } from './streams.js';
 import { advanceParticles } from './particles.js';
 import { vesselOrientation } from '../sim/vessel.js';
 import { reactionPackets } from '../metabolism.js';
-import { SPECIES_COLORS, FLOW_COLOR } from './palette.js';
+import { SPECIES_COLORS, FLOW_COLOR, temperatureRange } from './palette.js';
 import { sampleSurface } from '../sim/spatial.js';
 export function createScene(canvas) {
   const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true, depth: false });
@@ -88,8 +88,14 @@ export function createScene(canvas) {
     // Include the billboard's world-space radius, not just its centre. This
     // also contains large glows on small screens and at oblique camera angles.
     if(internal) {
-      const margin=spriteMargin(p,size,kind);
+      let margin=spriteMargin(p,size,kind);
       containInLiquid(renderSim,p,margin,bounded);
+      // Large density sprites can move far enough while being contained to
+      // change perspective size. Keep the largest radius at the final depth.
+      for (let pass = 0; kind > 1.5 && size >= 20 && pass < 3; pass++) {
+        margin = Math.max(margin, spriteMargin(bounded,size,kind));
+        containInLiquid(renderSim,bounded,margin,bounded);
+      }
       const uv=discToMaterial(bounded[0],bounded[2]);
       const water=(renderSim.volume-sampleSurface(renderSim,renderSim.surface.displacement,...uv))*HEIGHT;
       // Near an empty bottom, an oversized sprite may have no room to fit.
@@ -113,6 +119,28 @@ export function createScene(canvas) {
   };
   const yeastColor = SPECIES_COLORS.yeast, bacteriaColor = SPECIES_COLORS.bacteria, symColor = [.64, .69, .56], normal = [0, 1, 0];
   const activeBacteria = [];
+  const current = [0, 0, 0], midpoint = [0, 0, 0], currentHead = [0, 0, 0], currentTail = [0, 0, 0];
+  // Integrate the instantaneous solver field, so curved paths have a readable
+  // length at every frame rate. These samples never modify simulation state.
+  function emitCurrentPath(s, x, y, z, tint, opacity) {
+    const head = currentHead, tail = currentTail;
+    liquidPosition(s, x, y, z, head);
+    for (let step = 0; step < 12; step++) {
+      s.velocity(x, y, current, z);
+      const speed = Math.hypot(...current);
+      if (speed < .0005) break;
+      const dt = Math.min(.12, .025 / speed);
+      const mx = x - current[0] * dt * .5, my = y - current[1] * dt * .5, mz = z - current[2] * dt * .5;
+      s.velocity(mx, my, midpoint, mz);
+      x -= midpoint[0] * dt; y -= midpoint[1] * dt; z -= midpoint[2] * dt;
+      if (Math.min(x, y, z) < .015 || Math.max(x, y, z) > .985) break;
+      liquidPosition(s, x, y, z, tail);
+      const alpha = opacity * Math.min(1, speed * 6) * (1 - step / 12);
+      trailVertex(tail, normal, tint, alpha * .7, 6);
+      trailVertex(head, normal, tint, alpha, 6);
+      head[0] = tail[0]; head[1] = tail[1]; head[2] = tail[2];
+    }
+  }
   function emitOrganismsAndGas(view, s, p, old, mark) {
     for (let idx = 0; idx < s.agents.length; idx++) {
       const agent = s.agents[idx];
@@ -238,7 +266,7 @@ export function createScene(canvas) {
       buildFilm(state.film, s);
       state.revision++;
     }
-    if (simChanged || state.thermalOverlay !== thermalOverlay) {
+    if (simChanged || state.thermalOverlay !== thermalOverlay || (thermalOverlay && state.thermalRoom !== s.settings.room)) {
       buildWater(state.water, s, view.overlay);
       state.waterRevision++;
     }
@@ -248,6 +276,7 @@ export function createScene(canvas) {
     state.coverage = coverage;
     state.overlay = view.overlay;
     state.thermalOverlay = thermalOverlay;
+    state.thermalRoom = s.settings.room;
     advanceParticles(view, 0);
     state.count = 0;
     state.overflow = 0;
@@ -260,66 +289,27 @@ export function createScene(canvas) {
     emitOrganismsAndGas(view, s, p, old, mark);
     // 2. Emit metabolic packets and cross-feeding links within a bounded budget.
     emitMetabolicInteractions(view, s, p, mark, mate, Math.min(6800, state.count + 3200));
-    // 3. Emit volumetric 3D thermal convection plumes & Rayleigh-Bénard streamlines.
-    const stride = Math.max(1, Math.ceil(s.n / 240));
-    let tempSum = 0, tempCount = 0;
-    for (let i = 0; i < s.n; i += stride) {
-      tempSum += s.temperature[i];
-      tempCount++;
-    }
-    const meanTemp = tempCount ? tempSum / tempCount : s.settings.room;
-    const plumeBudget = Math.min(7100, state.count + 260);
-    for (let i = 0; i < s.n && state.count < plumeBudget; i += stride) {
-      if (!thermalOverlay) break;
-      const localDelta = s.temperature[i] - meanTemp;
-      const roomDelta = s.temperature[i] - s.settings.room;
-      const signal = localDelta * 4.5 + roomDelta * .45;
-      const threshold = thermalOverlay ? .035 : .14;
-      if (Math.abs(signal) < threshold)
-        continue;
-      const x = i % s.nx, y = Math.floor(i / s.nx) % s.ny, z = Math.floor(i / (s.nx * s.ny));
-      const u = (x + .5) / s.nx, v = (y + .5) / s.ny, w = (z + .5) / s.nz;
-      liquidPosition(s, u, v, w, p);
-      const warm = signal > 0;
-      const plumeColor = warm ? [1, .44, .12] : [.16, .68, .88];
-      const plumeAlpha = Math.min(thermalOverlay ? .22 : .075, (thermalOverlay ? .032 : .018) + Math.abs(signal) * (thermalOverlay ? .042 : .016));
-      addPoint(p, plumeColor, plumeAlpha, thermalOverlay ? 24 : 18, 2);
-      if (view.motion && (thermalOverlay || view.overlay === 'flow')) {
-        const vx = s.vx[i], vy = s.vy[i], vz = s.vz[i];
-        const speed = Math.hypot(vx, vy, vz);
-        if (speed > .004) {
-          const scale = Math.min(.075, .016 + speed * .85) / speed;
-          old[0] = p[0] - vx * scale;
-          old[1] = p[1] + vy * scale;
-          old[2] = p[2] - vz * scale;
-          trailVertex(old, normal, plumeColor, .14, 6);
-          trailVertex(p, normal, plumeColor, .58, 6);
-        }
-      }
-    }
+    // Temperature is a scalar volume, sampled at distributed tracer positions.
+    // Stepping a flattened grid by nx aliases every sample to one x column.
+    const thermal = thermalOverlay ? temperatureRange(s) : null, thermalTint = [0, 0, 0];
     // 4. Fill remaining capacity with ambient chemical tracers and flow streaks.
     const selected = ['sugar', 'oxygen', 'ethanol', 'acidity', 'co2'].indexOf(view.overlay);
-    const showStreaks = view.motion && view.particlePrevious && (view.overlay === 'flow' || view.overlay === 'liquid' || thermalOverlay);
     for (let i = 0; i < particles.length && state.count < 8192; i += 3) {
       const x = particles[i], y = particles[i + 1], z = particles[i + 2], index = s.index(x, y, z);
-      const [amount, fieldTint] = selected >= 0 ? fieldColor(s, index, selected) : [1, FLOW_COLOR];
+      const heat = thermal ? Math.max(-1, Math.min(1, (s.temperature[index] - thermal.centre) / thermal.extent)) : 0;
+      const [amount, fieldTint] = selected >= 0 ? fieldColor(s, index, selected) : [1, thermal ? teaColor(0, heat, 'temperature', thermalTint) : FLOW_COLOR];
       const color = fieldTint;
       if (amount < .004)
         continue;
       liquidPosition(s, x, y, z, p);
-      addPoint(p, color, selected >= 0 ? .18 + .38 * Math.min(1, amount) : view.overlay === 'liquid' ? .20 : .3, selected >= 0 ? 2.2 : 1.8);
-      if (showStreaks && (view.overlay === 'flow' || (i / 3 % 2 === 0))) {
-        liquidPosition(s, view.particlePrevious[i], view.particlePrevious[i + 1], view.particlePrevious[i + 2], old);
-        const dx = p[0] - old[0], dy = p[1] - old[1], dz = p[2] - old[2];
-        const dist2 = dx * dx + dy * dy + dz * dz;
-        if (view.overlay === 'flow' || dist2 > 1e-6) {
-          const boost = view.overlay === 'flow' ? 1.8 : 2.4;
-          old[0] = p[0] - dx * boost;
-          old[1] = p[1] - dy * boost;
-          old[2] = p[2] - dz * boost;
-          trailVertex(old, normal, color, view.overlay === 'flow' ? .2 : .04, 6);
-          trailVertex(p, normal, color, view.overlay === 'flow' ? .42 : .12, 6);
-        }
+      const concentration = Math.min(1, amount);
+      addPoint(p, color, selected >= 0 ? .65 * Math.sqrt(concentration) : view.overlay === 'liquid' ? .20 : .24, selected >= 0 ? 2.2 : 1.8);
+      if (thermal && i / 3 % 3 === 0)
+        addPoint(p, color, .11 + .10 * Math.abs(heat), 42, 2);
+      if (selected >= 0 && i / 3 % 10 === 0)
+        addPoint(p, color, .16 * concentration, 34 + concentration * 10, 2);
+      if (view.motion && (view.overlay === 'flow' || view.overlay === 'liquid') && i / 3 % 7 === 0) {
+        emitCurrentPath(s, x, y, z, FLOW_COLOR, view.overlay === 'liquid' ? .16 : .48);
       }
     }
     state.pointRevision = (state.pointRevision || 0) + 1;

@@ -43,6 +43,27 @@ test('dragging rotates, shift-dragging tips, and clicking never opens a zoom ove
   view.canvas.onpointerup({ pointerId: 1 });
 });
 
+test('direction buttons orbit the camera, then tip the vessel when tilt mode is selected', () => {
+  const controls = new Map();
+  const buttons = ['left','up','down','right'].map(camera => ({ dataset: { camera } }));
+  let redraws = 0;
+  const view = { sim: sheet(), camera: defaultCamera(), updateCamera() {}, draw() { redraws++; }, canvas: {},
+    $(id) { if(!controls.has(id)) controls.set(id, {}); return controls.get(id); },
+    $$() { return buttons; }
+  };
+  bindCamera(view);
+  const initial = { ...view.camera };
+  buttons[3].onclick(); near(view.camera.yaw,10);
+  buttons[0].onclick(); near(view.camera.yaw,0);
+  buttons[1].onclick(); near(view.camera.elevation,initial.elevation+3);
+  buttons[2].onclick(); near(view.camera.elevation,initial.elevation);
+  controls.get('#tilt-mode').onclick();
+  buttons[3].onclick(); near(view.sim.vessel.tilt,2); near(view.camera.yaw,0);
+  buttons[1].onclick(); near(view.sim.vessel.tiltZ,-2);
+  controls.get('#upright-jar').onclick(); near(view.sim.vessel.tilt,0); near(view.sim.vessel.tiltZ,0);
+  assert.equal(redraws,8,'Every interaction immediately redraws even when paused');
+});
+
 test('tipping responds on both screen axes at any orbit, clamps radially, and restores depth tilt', () => {
   const sim = sheet(), view = { sim, camera: defaultCamera() };
   tipVessel(view, 0, 8);

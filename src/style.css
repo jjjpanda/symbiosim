@@ -128,7 +128,8 @@ nav button { display: inline-flex; align-items: center; justify-content: center;
   scrollbar-width: none;
   padding: 0;
 }
-.left-rail::-webkit-scrollbar, .instruments::-webkit-scrollbar { display: none; }
+.left-rail::-webkit-scrollbar, .instruments::-webkit-scrollbar { width: 4px; }
+.left-rail, .instruments { scrollbar-width: thin; }
 .left-rail { grid-area: left; }
 .instruments { grid-area: instruments; }
 .voxel-card { display: grid; gap: 7px; }
@@ -233,6 +234,34 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
 .panel summary { cursor: pointer; min-height: 32px; font-weight: 560; }
 .reaction-key { display: grid; gap: 10px; margin-top: 16px; font: 11px/1.7 ui-monospace, Consolas, Menlo, monospace; }
 .action-status { margin: 0; color: var(--muted); font-size: 11px; }
+.action-status:empty { display: none; }
+.care-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fluid-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.swirl-button { min-height: 36px; border: 1px solid var(--line); border-radius: 10px; text-align: center; background: color-mix(in srgb, var(--cool) 8%, transparent); }
+.care-card .film-readings { padding: 9px 0 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; box-shadow: none; }
+.field-browser { display: grid; gap: 8px; padding: 10px 13px; }
+.field-select { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.field-select > span { color: var(--muted); font-size: 11px; }
+.field-select select { flex: 1; max-width: 180px; min-height: 32px; }
+.field-scale { height: 5px; border-radius: 5px; background: linear-gradient(90deg, color-mix(in srgb, var(--field-color) 7%, var(--bg)), var(--field-color)); }
+.field-scale.thermal { background: linear-gradient(90deg, #1f7ad1, #568571, #fa5700); }
+.field-scale-labels { display: flex; justify-content: space-between; font: 9px ui-monospace, monospace; color: var(--muted); }
+.field-scale[hidden] + .field-scale-labels { display: none; }
+#field-reading { white-space: normal; font-size: 10px; color: var(--muted); }
+#field-reading:empty { display: none; }
+.field-guide { border-top: 1px solid var(--line); padding-top: 6px; color: var(--muted); font-size: 11px; }
+.field-guide summary { cursor: pointer; min-height: 28px; display: flex; align-items: center; gap: 6px; }
+.field-guide summary::before { content: '+'; }
+.field-guide[open] summary::before { content: '\2212'; }
+.field-guide h3 { font-size: 12px; color: var(--fg); margin: 8px 0 4px; }
+.field-guide p { margin: 4px 0 8px; line-height: 1.6; }
+.field { display: grid; grid-template-rows: minmax(0, 1fr) auto auto; }
+#canvas { min-height: 0; }
+.vessel-tools { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 3px; padding: 5px 0; border-top: 1px solid var(--line); }
+.vessel-tools button { border: 1px solid var(--line); border-radius: 9px; padding: 5px 8px; min-height: 34px; font-size: 11px; text-align: center; }
+.vessel-tools [data-camera] { min-width: 30px; font-size: 16px; padding-inline: 4px; }
+.camera-label, .vessel-tools output { padding: 0 4px; font-size: 10px; color: var(--muted); }
+.field-footer { position: static; padding: 2px 0; font-size: 9px; }
 .history-dialog { width: min(1100px, calc(100vw - 28px)); background: var(--bg); }
 .history-dialog .panel-top { position: sticky; top: -28px; z-index: 1; padding-block: 8px; background: var(--bg); }
 .history-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
@@ -278,10 +307,11 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
   .identity { width: 100%; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
   .identity h1 { font-size: 20px; }
   .identity p { margin: 0; font-size: 11px; }
-  nav { width: 100%; justify-content: space-between; }
+  nav { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
   nav button, .exchange { min-height: 44px; }
-  nav button { padding: 0 11px; }
-  .field { height: clamp(390px, 115cqw, 640px); min-height: 0; max-height: none; }
+  nav button { padding: 0 6px; min-width: 0; gap: 4px; font-size: 12px; }
+  nav button svg { width: 16px; height: 16px; }
+  .field { height: clamp(480px, 125cqw, 700px); min-height: 0; max-height: none; }
   .mobile-readings { position: absolute; top: 38px; left: 12px; right: 12px; display: flex; justify-content: center; gap: 16px; pointer-events: none; color: var(--muted); font-size: 10px; }
   .mobile-readings b { color: var(--fg); font-weight: 500; font-variant-numeric: tabular-nums; }
   .view-actions button, .session-actions button { min-height: 44px; }
@@ -292,7 +322,7 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
   .hud, .field-footer { left: 12px; right: 12px; }
   .hud { top: 12px; }
   .instruments, .left-rail { grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 2px 4px; }
-  .settings { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+  .settings { grid-template-columns: minmax(0, 1fr); gap: 14px; }
   .settings .view-control { grid-template-columns: 1fr; gap: 5px; }
   .settings .view-control select { width: 100%; }
   .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
@@ -303,12 +333,17 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
   .trend svg { height: 46px; }
   .culture-notes { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
   .legend { justify-content: center; }
+  .camera-label { display: none; }
+  .field-select select, .field-guide summary, .care-heading button, .swirl-button { min-height: 44px; }
+  .vessel-tools button { min-height: 44px; }
+  .vessel-tools [data-camera] { min-width: 44px; }
+
   dialog { padding: 20px; width: calc(100vw - 20px); max-height: calc(100dvh - 20px); }
   .panel-top button, [data-close] { min-width: 44px; min-height: 44px; }
 }
 @container (max-width: 380px) {
-  nav { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .play-button { min-width: 92px; }
+  nav { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .play-button { min-width: 0; }
   .identity p { font-size: 10px; }
 }
 @media (prefers-reduced-motion: reduce) {

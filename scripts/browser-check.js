@@ -119,6 +119,48 @@ try {
   assert.equal(tracking.overlap,false);assert.equal(tracking.locks.length,2);
   for(const lock of tracking.locks){assert.equal(lock.species,lock.type);assert.match(lock.summary,/pH/);}
   assert.equal(tracking.presets,4);assert.equal(tracking.quickTweaks,false);
+  const fields = await evaluate(`(() => {
+    const v=document.querySelector('symbiosim-vessel'), results=[];
+    for(const option of v.$('#overlay').options) {
+      v.$('#overlay').value=option.value;v.$('#overlay').dispatchEvent(new Event('change'));
+      results.push({id:v.overlay, selected:v.$('#overlay').value===v.overlay ? 1 : 0,
+        title:v.$('#field-title').textContent, description:v.$('#field-description').textContent,
+        reading:v.$('#field-reading').textContent,error:v.sceneError,gl:v.sceneRenderer?.gl.getError()});
+    }
+    v.selectField('liquid');
+    return results;
+  })()`);
+  assert.equal(fields.length,9);
+  for(const field of fields) {
+    assert.equal(field.selected,1);assert.ok(field.title&&field.description);
+    assert.doesNotMatch(field.reading,/NaN|undefined/);
+    if(!layoutOnly){assert.equal(field.error,undefined);assert.equal(field.gl,0);}
+  }
+  // Hit-test and click the actual controls, including after focus moves to a button.
+  const clickControl = async selector => {
+    const point = await evaluate(`(() => {
+      const v=document.querySelector('symbiosim-vessel'),button=v.$(${JSON.stringify(selector)});
+      button.scrollIntoView({block:'nearest'});const r=button.getBoundingClientRect();
+      const x=r.left+r.width/2,y=r.top+r.height/2;
+      return {x,y,hit:v.shadowRoot.elementFromPoint(x,y)===button};
+    })()`);
+    assert.equal(point.hit,true,selector+' must receive pointer input');
+    await command('Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',clickCount:1});
+    await command('Input.dispatchMouseEvent',{type:'mouseReleased',x:point.x,y:point.y,button:'left',clickCount:1});
+  };
+  await evaluate(`document.querySelector('symbiosim-vessel').camera.yaw=0`);
+  await clickControl('[data-camera="right"]');
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').camera.yaw`),10);
+  await clickControl('[data-k="w"]');
+  assert.match(await evaluate(`document.querySelector('symbiosim-vessel').$('[role=status]').textContent`),/Swirl/i);
+  const themeBefore=await evaluate(`document.querySelector('symbiosim-vessel').isDark()`);
+  await clickControl('[data-k="t"]');
+  assert.notEqual(await evaluate(`document.querySelector('symbiosim-vessel').isDark()`),themeBefore);
+  await clickControl('[data-chart="all"]');
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$('#detail').open`),true);
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$$('.history-card').length`),8);
+  await clickControl('[data-close="detail"]');
+  assert.equal(await evaluate(`(() => {const v=document.querySelector('symbiosim-vessel');return ['pour','drain','starter','skim'].every(id=>v.$('#'+id).closest('.care-card') && !v.$('#'+id).closest('dialog'));})()`),true);
   // Exercise actual browser pointer capture and Shift modifiers on both axes.
   const pointerOrigin=await evaluate(`(() => {
     const v=document.querySelector('symbiosim-vessel');v.camera.yaw=0;v.sim.vessel.tilt=v.sim.vessel.tiltZ=0;v.draw();
@@ -181,6 +223,11 @@ try {
   assert.ok(redraw.changed>100&&redraw.occupied>1000,'Orbit must move actual rendered geometry');
   assert.equal(redraw.error,0);assert.equal(redraw.residual,0,'Returning the camera must leave no old-frame geometry');
   await screenshot('rework-desktop-dark');
+  for (const field of ['flow','oxygen','sugar','temperature']) {
+    await evaluate(`document.querySelector('symbiosim-vessel').selectField('${field}')`);
+    await screenshot('field-'+field);
+  }
+  await evaluate(`document.querySelector('symbiosim-vessel').selectField('liquid')`);
   await evaluate(`document.querySelector('symbiosim-vessel').setViewMode('voxel')`);
   await screenshot('tracked-cells-expanded');
   await evaluate(`document.querySelector('symbiosim-vessel').setViewMode('split')`);

@@ -13,7 +13,7 @@ import { stepPellicle } from '../src/sim/pellicle.js';
 import { pickVoxel, renderVoxel, voxelContext } from '../src/render/voxel.js';
 import { sampleSurface } from '../src/sim/spatial.js';
 import { LIQUID_RADIUS } from '../src/sim/constants.js';
-import { SPECIES_COLORS, FLOW_COLOR } from '../src/render/palette.js';
+import { SPECIES_COLORS, FLOW_COLOR, temperatureRange } from '../src/render/palette.js';
 import { CHEMICAL_COLORS } from '../src/metabolism.js';
 const near = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) < tolerance, `${a} differs from ${b}`);
 function mockCanvas() {
@@ -375,6 +375,73 @@ test('default culture view suppresses reaction confetti and chemical views use o
     view.overlay=overlay;scene.render(view);
     assert.ok(colors().every(color=>[...Object.values(SPECIES_COLORS),CHEMICAL_COLORS[chemical]].some(allowed=>same(color,allowed))));
   }
+  scene.dispose();
+});
+
+test('circulation paths exist on a paused first frame, follow the solver, and vanish in still tea or reduced motion', () => {
+  const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation();
+  sim.gas.bubbles = []; sim.gas.bursts = []; sim.gas.pockets.fill(0);
+  sim.vx.fill(.2); sim.vy.fill(.06); sim.vz.fill(0);
+  const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, camera: {}, ratio: 1, motion: true, overlay: 'flow', isDark: () => true };
+  const before = sim.snapshot();
+  scene.render(view);
+  assert.ok(scene.trails.count > 100, 'Instantaneous streamlines must be readable before advection has a previous frame');
+  let length = 0;
+  for (let i = 0; i < scene.trails.count; i += 2) {
+    const a = scene.trails.vertices.subarray(i * STRIDE, i * STRIDE + 3);
+    const b = scene.trails.vertices.subarray((i + 1) * STRIDE, (i + 1) * STRIDE + 3);
+    length += Math.hypot(...a.map((v, j) => v - b[j]));
+    assert.ok(b[1] <= a[1] + 1e-6, 'Positive solver depth velocity points downward in world space');
+  }
+  assert.ok(length > 1, 'Curves must have visible length without a frame-dependent extrapolation');
+  assert.deepEqual(sim.snapshot(), before, 'Tracing is read-only');
+  view.motion = false; scene.render(view);
+  assert.equal(scene.trails.count, 0);
+  view.motion = true; sim.vx.fill(0); sim.vy.fill(0); sim.vz.fill(0); scene.render(view);
+  assert.equal(scene.trails.count, 0, 'Still tea must not invent circulation');
+  scene.dispose();
+});
+
+test('chemical clouds scale with local concentration and disappear when the selected substance is absent', () => {
+  const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation();
+  sim.gas.bubbles = []; sim.gas.bursts = []; sim.gas.pockets.fill(0);
+  const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, camera: {}, ratio: 1, motion: false, overlay: 'ethanol', isDark: () => true };
+  const clouds = () => Array.from({ length: scene.count }, (_, i) => i * 9).filter(at => scene.points[at + 8] === 2);
+  sim.fields.ethanol.fill(0); scene.render(view);
+  assert.equal(clouds().length, 0);
+  sim.fields.ethanol.fill(2); scene.render(view);
+  const low = clouds();
+  assert.ok(low.length > 50);
+  const opacity = scene.points[low[0] + 6];
+  sim.fields.ethanol.fill(6); scene.render(view);
+  const high = clouds();
+  assert.ok(high.length > 50);
+  assert.ok(scene.points[high[0] + 6] > opacity * 2.9, 'Cloud opacity must reflect the concentration increase');
+  assert.ok(scene.points.subarray(0, scene.count * 9).every(Number.isFinite));
+  scene.dispose();
+});
+
+test('temperature clouds sample the full volume without column aliasing and share the water and legend scale', () => {
+  const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation();
+  sim.agents = []; sim.gas.bubbles = []; sim.gas.bursts = []; sim.gas.pockets.fill(0);
+  sim.temperature = sim.temperature.map((_, i) => i % sim.nx < sim.nx / 2 ? 18 : 30);
+  const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, camera: {}, ratio: 1, motion: true, overlay: 'temperature', isDark: () => true };
+  const before = sim.snapshot();
+  scene.render(view);
+  const clouds = Array.from({length:scene.count},(_,i)=>i*9).filter(at=>scene.points[at+8]===2);
+  assert.ok(clouds.length > 300, 'Clouds must cover the volume rather than a handful of grid columns');
+  for(const axis of [0,1,2]) {
+    const positions=clouds.map(at=>scene.points[at+axis]);
+    assert.ok(Math.max(...positions)-Math.min(...positions)>.5, 'Thermal samples span every spatial axis');
+  }
+  assert.ok(clouds.some(at=>scene.points[at+3]<.2), 'Cool samples retain blue hues');
+  assert.ok(clouds.some(at=>scene.points[at+3]>.9), 'Warm samples retain orange hues');
+  assert.equal(scene.trails.count,0,'Temperature alone must not be represented by velocity streaks');
+  assert.deepEqual(temperatureRange(sim), {low:18, high:30, centre:24, extent:6});
+  const revision=scene.waterRevision;
+  sim.applySettings({room:26}); scene.render(view);
+  assert.equal(scene.waterRevision,revision+1,'Room adjustments recolor paused water');
+  before.settings.room=26; assert.deepEqual(sim.snapshot(),before,'Temperature rendering is read-only');
   scene.dispose();
 });
 

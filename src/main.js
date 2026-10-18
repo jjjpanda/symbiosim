@@ -1,4 +1,4 @@
-import { Simulation, PRESETS, REGIMES } from './engine.js';
+import { Simulation, REGIMES } from './engine.js';
 import { draw } from './renderer.js';
 import { vesselTemplate, OVERLAYS } from './template.js';
 import { HISTORY_CHARTS, drawChart, historyWindow, readingDeltas, formatChartValue } from './charts.js';
@@ -9,10 +9,12 @@ import { vesselTilt } from './sim/vessel.js';
 import { pellicleStats, SKIM_THICKNESS } from './sim/pellicle.js';
 import { teaColor } from './render/objects.js';
 import { pickVoxel, renderVoxel } from './render/voxel.js';
+import { FIELD_VIEWS } from './fields.js';
+import { temperatureRange } from './render/palette.js';
 
 const SPEEDS = [1, 4, 12, 30, 60];
-const SETTINGS = [['room', 1], ['swing', 1], ['permeability', 100], ['convection', 100], ['variation', 100]];
-const OUTPUTS = [['room', 'room', '°C'], ['swing', 'swing', '°C'], ['permeability', 'permeability', '%'], ['convection', 'convection', '%'], ['variation', 'variation', '%'], ['drain', 'drain-amount', '%'], ['pour', 'pour-amount', '%'], ['tea-temp', 'tea-temp', '°C'], ['tea-sugar', 'tea-sugar', ' g/L'], ['starter', 'starter-amount', '%'], ['starter-balance', 'starter-balance', '%']];
+const SETTINGS = [['room', 1], ['swing', 1], ['permeability', 100]];
+const OUTPUTS = [['room', 'room', '°C'], ['swing', 'swing', '°C'], ['permeability', 'permeability', '%'], ['drain', 'drain-amount', '%'], ['pour', 'pour-amount', '%'], ['tea-temp', 'tea-temp', '°C'], ['tea-sugar', 'tea-sugar', ' g/L'], ['starter', 'starter-amount', '%'], ['starter-balance', 'starter-balance', '%']];
 const fmt = (v, digits = 1) => Number(v).toFixed(digits);
 const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
 
@@ -72,6 +74,45 @@ export class SymbiosimVessel extends HTMLElement {
   }
   announce(text) { this.$('[role=status]').textContent = text; }
 
+  selectField(id) {
+    if (!OVERLAYS.includes(id)) return;
+    this.overlay = id;
+    this.updateField(); this.draw();
+  }
+
+  updateField() {
+    const field = FIELD_VIEWS.find(item => item.id === this.overlay);
+    this.$('#overlay').value = field.id;
+    this.$('#field-title').textContent = field.name;
+    this.$('#field-description').textContent = field.note;
+    this.$('#field-key').textContent = field.key;
+    this.$('#field-low').textContent = field.ends[0];
+    this.$('#field-high').textContent = field.ends[1];
+    const scale = this.$('#field-scale');
+    scale.hidden = field.id === 'liquid' || field.id === 'organisms';
+    scale.style?.setProperty('--field-color', field.color);
+    scale.classList?.toggle('thermal', field.id === 'temperature');
+    let reading = '';
+    if (field.max) {
+      let total = 0, peak = 0;
+      const f = this.sim.fields;
+      for (let i = 0; i < this.sim.n; i++) {
+        const amount = field.id === 'sugar' ? f.sucrose[i] + f.glucose[i] + f.fructose[i]
+          : field.id === 'acidity' ? f.acetic[i] + f.gluconic[i] : f[field.id][i];
+        total += amount; peak = Math.max(peak, amount);
+      }
+      const unit = field.ends[1].replace(/^[\d.]+ /, '').replace('+', '');
+      reading = `Mean ${fmt(total / this.sim.n, 2)} · peak ${fmt(peak, 2)} ${unit}`;
+      if (peak < .004 * field.max) reading += ' · trace amounts; clouds appear as it accumulates';
+    } else if (field.id === 'temperature') {
+      const { low, high } = temperatureRange(this.sim);
+      this.$('#field-low').textContent = `${fmt(low)}°C`;
+      this.$('#field-high').textContent = `${fmt(high)}°C`;
+      reading = `${fmt(this.sim.meanTemperature())}°C in tea · ${fmt(this.sim.settings.room)}°C room average`;
+    }
+    this.$('#field-reading').textContent = reading;
+  }
+
   setViewMode(mode) {
     this.viewMode = mode;
     const layout = this.$('.layout');
@@ -119,12 +160,11 @@ export class SymbiosimVessel extends HTMLElement {
       };
     }
     this.addEventListener('keydown', e => {
-      if (e.ctrlKey || e.metaKey || e.altKey || e.composedPath()[0].matches?.('input, select, button, summary') || this.$('#panel').open || this.$('#detail').open) return;
+      const target = e.composedPath()[0];
+      if (e.ctrlKey || e.metaKey || e.altKey || target.matches?.('input, select, summary') || (target.matches?.('button') && [' ', 'Enter'].includes(e.key)) || this.$('#panel').open || this.$('#detail').open) return;
       if (this.command(e.key.toLowerCase(), e.shiftKey)) e.preventDefault();
     });
     this.$('#speed').oninput = e => { this.sim.speed = Number(e.target.value); this.updateControls(false); };
-    const cover = id => { this.activePreset = null; this.sim.applySettings({ cover: id }); this.updateControls(); this.draw(); };
-    this.$$('[data-cover]').forEach(button => button.onclick = () => cover(button.dataset.cover));
     this.$$('[data-preset]').forEach(button => button.onclick = () => {
       const name = button.dataset.preset;
       if (!REGIMES[name]) return;
@@ -133,9 +173,16 @@ export class SymbiosimVessel extends HTMLElement {
       this.updateControls(); this.updateReadings(); this.draw();
       this.announce(regime.label);
     });
-    this.$('#overlay').onchange = e => { this.overlay = e.target.value; this.draw(); };
-    for (const [id, scale] of SETTINGS) this.$('#' + id).oninput = e => { this.activePreset = null; this.sim.applySettings({ [id]: Number(e.target.value) / scale }); this.updateControls(); this.draw(); };
-    for (const [, id] of OUTPUTS.slice(5)) this.$('#' + id).oninput = () => this.updateControls(false);
+    this.$('#overlay').onchange = e => this.selectField(e.target.value);
+    for (const [id, scale] of SETTINGS) this.$('#' + id).oninput = e => {
+      this.activePreset = null;
+      // The slider is the sole gas-exchange control; a legacy sealed-cover
+      // multiplier must not silently override the selected permeability.
+      const patch = { [id]: Number(e.target.value) / scale };
+      if (id === 'permeability') patch.cover = 'open';
+      this.sim.applySettings(patch); this.updateControls(); this.updateField(); this.draw();
+    };
+    for (const [, id] of OUTPUTS.slice(3)) this.$('#' + id).oninput = () => this.updateControls(false);
     const value = id => Number(this.$('#' + id).value);
     for (const [id, key] of [['auto-drain', 'autoDrain'], ['tea-mode', 'teaMode'], ['auto-skim', 'autoSkim']]) {
       this.$('#' + id).onchange = e => { this.sim.care[key] = e.target.checked; this.updateReadings(); };
@@ -145,6 +192,7 @@ export class SymbiosimVessel extends HTMLElement {
     }
     const transfer = (phase, amount, recipe = { temperature: value('tea-temp'), sugar: value('tea-sugar') }) => {
       const accepted = this.sim.startTransfer(phase, amount, recipe);
+      if (accepted) this.$('#panel').close?.();
       this.intervene(accepted, phase === 'drain' ? 'Drawing' : 'Pouring tea');
     };
     this.$('#drain').onclick = () => transfer('drain', value('drain-amount') / 100);
@@ -176,7 +224,7 @@ export class SymbiosimVessel extends HTMLElement {
     else if (key === 'r') { Object.assign(this.camera, defaultCamera()); this.updateCamera(); }
     else if (key === ' ') { this.sim.playing = !this.sim.playing; }
     else if (key === 's') { this.sim.playing = false; this.advance(.08); }
-    else if (key === 'w') { this.sim.stir(); this.announce('Swirling the tea.'); }
+    else if (key === 'w') { this.sim.stir(); this.announce(this.sim.playing ? 'Swirling the tea.' : 'Swirl queued. Resume or Step to see the tea move.'); }
     else if (key === 'h') {
       const accepted = this.sim.startTransfer('pour', .08, { temperature: 70, sugar: this.sim.care.sugar });
       this.intervene(accepted, 'Pouring hot tea at 70°C');
@@ -190,7 +238,7 @@ export class SymbiosimVessel extends HTMLElement {
     else if (key === 't') this.setAttribute('theme', this.isDark() ? 'light' : 'dark');
     else if (key === 'c' || key === 'e') { this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
     else if (key === 'f') { this.sim.speed = SPEEDS.find(speed => speed > this.sim.speed) || SPEEDS[0]; this.updateControls(); }
-    else if (key === 'v') { this.overlay = OVERLAYS[(OVERLAYS.indexOf(this.overlay) + 1) % OVERLAYS.length]; this.$('#overlay').value = this.overlay; }
+    else if (key === 'v') this.selectField(OVERLAYS[(OVERLAYS.indexOf(this.overlay) + 1) % OVERLAYS.length]);
     else return false;
     this.updateReadings(); this.draw(); return true;
   }
@@ -199,6 +247,8 @@ export class SymbiosimVessel extends HTMLElement {
   updateCamera() {
     const tilt = Math.abs(vesselTilt(this.sim));
     this.$('#jar-tilt-output').value = `${Math.round(tilt * 180 / Math.PI)}° tilt`;
+    this.$('#jar-tilt-output').hidden = tilt < .008;
+    this.$('#upright-jar').hidden = tilt < .008;
     this.$('#tilt-mode').setAttribute('aria-pressed', String(Boolean(this.tiltMode)));
     this.canvas.classList?.toggle('tilting', Boolean(this.tiltMode));
   }
@@ -212,7 +262,6 @@ export class SymbiosimVessel extends HTMLElement {
     }
     this.$('#speed-output').textContent = `${fmt(s.speed, 0)} days/min`;
     this.$('[data-k="t"]').setAttribute('aria-label', `Switch to ${this.isDark() ? 'light' : 'dark'} theme`);
-    this.$$('[data-cover]').forEach(button => { button.classList.toggle('on', button.dataset.cover === s.settings.cover); button.setAttribute('aria-pressed', String(button.dataset.cover === s.settings.cover)); });
     this.$$('[data-preset]').forEach(button => {
       const active = button.dataset.preset === this.activePreset;
       button.classList?.toggle('on', active);
@@ -220,11 +269,13 @@ export class SymbiosimVessel extends HTMLElement {
     });
     for (const [id, input, unit] of OUTPUTS) this.$('#' + id + '-output').value = this.$('#' + input).value + unit;
     for (const id of ['pour', 'drain']) this.$('#' + id).textContent = `${id === 'pour' ? 'Pour' : 'Drain'} ${this.$('#' + id + '-amount').value}%`;
+    this.$('#starter').textContent = `Add starter ${this.$('#starter-amount').value}%`;
   }
 
   chart(svg, kind, window) { drawChart(svg, this.sim.history, kind, this.palette, window); }
   updateReadings() {
     if (this.camera) this.updateCamera();
+    this.updateField();
     const s = this.sim, counts = s.counts();
     for (const id of ['drain', 'pour', 'starter']) this.$('#' + id).disabled = Boolean(s.care.transfer);
     const film = pellicleStats(s);
@@ -323,7 +374,6 @@ export class SymbiosimVessel extends HTMLElement {
         const label = this.$('#' + type + '-' + key);
         if (label.textContent !== info[key]) label.textContent = info[key];
       }
-      if (info.replaced) this.announce(`Following another ${type === 'yeast' ? 'yeast' : 'acetic acid bacterium'}; the previous cell is no longer in the vessel.`);
     }
   }
 
