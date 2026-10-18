@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="An embeddable interactive fermentation vessel.">
+  <link rel="icon" type="image/x-icon" href="../favicon.ico?v=3">
+  <title>Symbiosim embed</title>
+  <style>
+    html, body { width: 100%; height: 100%; margin: 0; background: transparent; overflow: hidden; }
+    symbiosim-vessel { display: block; width: 100%; height: 100%; }
+    symbiosim-vessel:not(:defined) { visibility: hidden; }
+  </style>
+  <script type="module" src="../src/embed.js"></script>
+</head>
+<body>
+  <symbiosim-vessel embed></symbiosim-vessel>
+</body>
+</html>

@@ -10,6 +10,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const site = resolve(root, process.argv[2] || '.');
 const artifacts = resolve(root, '.artifacts');
 const layoutOnly = process.env.LAYOUT_ONLY === '1';
+const embedOnly = process.argv.includes('--embed');
 const candidates = [process.env.BROWSER_PATH, 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
   'C:/Program Files/Google/Chrome/Application/chrome.exe', '/usr/bin/chromium', '/usr/bin/google-chrome',
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'].filter(Boolean);
@@ -94,6 +95,7 @@ try {
   const attached = await command('Target.attachToTarget', { targetId: target.targetId, flatten: true });
   pageSession = attached.sessionId;
   await command('Runtime.enable'); await command('Page.enable'); await command('Network.enable');
+  if (!embedOnly) {
   await metrics(1365, 900);
   await command('Page.navigate', { url: siteUrl });
   for (let i=0;i<40;i++) {
@@ -319,6 +321,42 @@ try {
   console.log(JSON.stringify({fresh,phone,hot,redraw,screenshots:artifacts}));
   console.log('PASS: native scene shaders, shared depth/refraction, visible particles, hot pour, spigot, orbit and five viewport sizes.');
   }
+  }
+  // Test the hosted entry itself, including options before custom-element upgrade.
+  await metrics(420, 520);
+  const embedQuery = '?room=20&preset=convection&swing=1&permeability=10&theme=dark&field=ethanol&speed=4&autoplay=false&transparent=true';
+  await command('Page.navigate', { url: siteUrl + '/embed' + embedQuery });
+  for (let i = 0; i < 100; i++) {
+    if (await evaluate(`location.pathname === '/embed/' && Boolean(document.querySelector('symbiosim-vessel')?.sim)`)) break;
+    await pause(100);
+  }
+  // Allow the component's linked stylesheet to load before measuring its layout.
+  await pause(200);
+  const embed = await evaluate(`(() => {
+    const v = document.querySelector('symbiosim-vessel');
+    v.draw();
+    const bounds = v.canvas.getBoundingClientRect();
+    return {
+      path: location.pathname, search: location.search,
+      room: v.sim.settings.room, swing: v.sim.settings.swing, permeability: v.sim.settings.permeability,
+      speed: v.sim.speed, playing: v.sim.playing, field: v.overlay, theme: v.getAttribute('theme'),
+      hiddenUi: ['.masthead', '.left-rail', '.instruments', '.hud', '.vessel-tools'].every(sel => v.$(sel).getClientRects().length === 0),
+      background: getComputedStyle(v).backgroundColor, autofocus: v.hasAttribute('autofocus'),
+      width: Math.round(bounds.width), height: Math.round(bounds.height),
+      overflow: document.documentElement.scrollWidth > innerWidth || document.documentElement.scrollHeight > innerHeight,
+      error: v.sceneError, backend: v.sceneRenderer?.backend, gl: v.sceneRenderer?.gl.getError()
+    };
+  })()`);
+  assert.equal(embed.path, '/embed/'); assert.equal(embed.search, embedQuery);
+  assert.equal(embed.room, 20); assert.equal(embed.swing, 1); assert.equal(embed.permeability, .1);
+  assert.equal(embed.speed, 4); assert.equal(embed.playing, false); assert.equal(embed.field, 'ethanol');
+  assert.equal(embed.theme, 'dark'); assert.equal(embed.hiddenUi, true); assert.equal(embed.autofocus, false);
+  assert.equal(embed.background, 'rgba(0, 0, 0, 0)');
+  assert.equal(embed.width, 420); assert.equal(embed.height, 520); assert.equal(embed.overflow, false);
+  if (!layoutOnly) { assert.equal(embed.error, undefined); assert.equal(embed.backend, 'webgl2'); assert.equal(embed.gl, 0); }
+  assert.deepEqual(errors, [], 'Hosted embed has no browser exceptions or missing assets');
+  await screenshot('hosted-embed');
+  console.log('PASS: hosted /embed redirect, query controls, paused startup, transparent layout and assets.');
   pageSession=undefined;await command('Browser.close');
 } finally {
   socket?.close();browser.kill();server.kill();

@@ -18,6 +18,31 @@ Sweet tea circulates by heat, density, and rising $\text{CO}_2$ bubbles while a 
 
 ## Embed
 
+### Hosted iframe
+
+Embed the vessel with an iframe:
+
+```html
+<iframe
+  src="https://jjjpanda.github.io/symbiosim/embed/?preset=balanced&amp;theme=dark&amp;speed=12&amp;transparent=true"
+  title="Interactive fermentation simulation"
+  width="420"
+  height="520"
+  loading="lazy"
+  style="border: 0;"
+></iframe>
+```
+
+The vessel fills the iframe with its panels hidden. Set the iframe's dimensions in the parent page; omit URL `width` and `height` to fill it.
+
+Query parameters use the [Options](#options) names and defaults; `embed` is always enabled. Set `autoplay=false` to start paused. `transparent` and `autofocus` accept `true` or a bare parameter to enable, and `false` or omission to disable.
+
+Numeric controls are clamped to the ranges below; positive `width` and `height` values are rounded to whole pixels. Unknown or invalid values are ignored; the first repeated value wins.
+
+Explicit `room`, `swing`, and `permeability` override the preset regardless of query order. Changing the iframe's `src` reloads the simulation with the new settings.
+
+### Web component
+
 ```sh
 npm install ../symbiosim
 ```
@@ -29,8 +54,6 @@ import 'symbiosim';
 ```html
 <symbiosim-vessel embed transparent width="420" height="520" preset="balanced" theme="dark"></symbiosim-vessel>
 ```
-
-Adding `embed` hides the masthead, organism close-up rails, instrument panels, HUD, and camera toolbar so only the interactive 3D jar is displayed. Adding `transparent` removes the component backdrop and prevents glass/tea refraction from compositing an opaque room fill behind the vessel.
 
 ## Options
 
@@ -76,3 +99,5 @@ npm run build
 ```
 
 `npm run benchmark` times solver steps, `npm run soak -- 30 --playback` verifies multi-week culture stability and snapshot restoration, and `npm run check:browser` runs headless Chromium WebGL and layout checks.
+
+After building, `npm run check:browser -- dist --embed` checks the hosted embed page, including its redirect, query options, transparent layout, and WebGL rendering.
