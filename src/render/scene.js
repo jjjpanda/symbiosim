@@ -1,14 +1,16 @@
 import { createProgram } from './webgl.js';
 import { meshVertex, meshFragment, particleVertex, particleFragment } from './scene-shaders.js';
 import { Geometry, STRIDE } from './geometry.js';
-import { createJar, createTap, buildWater, buildFilm, fieldColor, teaColor } from './objects.js';
+import { createJar, createTap, buildWater, buildFilm, teaColor } from './objects.js';
 import { cameraMatrix, liquidPosition, containInLiquid, discToMaterial, HEIGHT } from './space.js';
 import { buildStreams } from './streams.js';
 import { advanceParticles } from './particles.js';
 import { vesselOrientation } from '../sim/vessel.js';
-import { reactionPackets } from '../metabolism.js';
-import { SPECIES_COLORS, FLOW_COLOR, temperatureRange } from './palette.js';
+import { reactionPackets, CHEMICAL_COLORS } from '../metabolism.js';
+import { SPECIES_COLORS, FLOW_COLOR, scalarColor } from './palette.js';
+import { activityTurnover } from './activity.js';
 import { sampleSurface } from '../sim/spatial.js';
+import { fieldView, fieldAmount, fieldRange, fieldFraction } from '../fields.js';
 export function createScene(canvas) {
   const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true, depth: false });
   if (!gl)
@@ -23,7 +25,7 @@ export function createScene(canvas) {
     disposeResources(gl, resources);
     throw error;
   }
-  const uniforms = program => Object.fromEntries(['Camera', 'Tilt', 'TiltDirection', 'Eye', 'Background', 'Viewport', 'Backdrop', 'Water', 'Refract', 'Ratio'].map(key => [key, gl.getUniformLocation(program, 'u' + key)]));
+  const uniforms = program => Object.fromEntries(['Camera', 'Tilt', 'TiltDirection', 'Eye', 'Background', 'Viewport', 'Backdrop', 'Water', 'Refract', 'Ratio', 'Zoom'].map(key => [key, gl.getUniformLocation(program, 'u' + key)]));
   const meshUniforms = uniforms(meshProgram), pointUniforms = uniforms(pointProgram);
   const gpu = new Map();
   const meshBuffer = mesh => {
@@ -119,10 +121,10 @@ export function createScene(canvas) {
   };
   const yeastColor = SPECIES_COLORS.yeast, bacteriaColor = SPECIES_COLORS.bacteria, symColor = [.64, .69, .56], normal = [0, 1, 0];
   const activeBacteria = [];
-  const current = [0, 0, 0], midpoint = [0, 0, 0], currentHead = [0, 0, 0], currentTail = [0, 0, 0];
+  const current = [0, 0, 0], midpoint = [0, 0, 0], currentHead = [0, 0, 0], currentTail = [0, 0, 0], currentTint = [0, 0, 0];
   // Integrate the instantaneous solver field, so curved paths have a readable
   // length at every frame rate. These samples never modify simulation state.
-  function emitCurrentPath(s, x, y, z, tint, opacity) {
+  function emitCurrentPath(s, x, y, z, tint, opacity, range = null) {
     const head = currentHead, tail = currentTail;
     liquidPosition(s, x, y, z, head);
     for (let step = 0; step < 12; step++) {
@@ -135,13 +137,15 @@ export function createScene(canvas) {
       x -= midpoint[0] * dt; y -= midpoint[1] * dt; z -= midpoint[2] * dt;
       if (Math.min(x, y, z) < .015 || Math.max(x, y, z) > .985) break;
       liquidPosition(s, x, y, z, tail);
-      const alpha = opacity * Math.min(1, speed * 6) * (1 - step / 12);
-      trailVertex(tail, normal, tint, alpha * .7, 6);
-      trailVertex(head, normal, tint, alpha, 6);
+      const color = range ? scalarColor(tint, fieldFraction(speed, range), currentTint) : tint;
+      const alpha = opacity * (range ? .8 : Math.min(1, speed * 6)) * (1 - step / 12);
+      trailVertex(tail, normal, color, alpha * .7, 6);
+      trailVertex(head, normal, color, alpha, 6);
       head[0] = tail[0]; head[1] = tail[1]; head[2] = tail[2];
     }
   }
-  function emitOrganismsAndGas(view, s, p, old, mark) {
+  function emitOrganismsAndGas(view, s, p, old, mark, fieldContext = false) {
+    const subdued = view.overlay !== 'liquid';
     for (let idx = 0; idx < s.agents.length; idx++) {
       const agent = s.agents[idx];
       liquidPosition(s, agent.x, agent.y, agent.z, p);
@@ -149,10 +153,13 @@ export function createScene(canvas) {
       const energy = agent.energy ?? .5;
       if (agent.id === view.voxels?.[agent.type]?.agentId) {
         containInLiquid(s, p, spriteMargin(p,12,3));
-        addPoint(p, isYeast ? yeastColor : bacteriaColor, .85, 12, 3);
+        addPoint(p, isYeast ? yeastColor : bacteriaColor, subdued ? .28 : .85, 12, 3);
       }
-      addPoint(p, isYeast ? yeastColor : bacteriaColor, .96, (isYeast ? 4.5 : 4) + Math.min(1.4, energy * .9), isYeast ? 0 : -1 - (agent.id * .618 % 1));
+      const size = (isYeast ? 4.5 : 4) + Math.min(1.4, energy * .9);
+      addPoint(p, isYeast ? yeastColor : bacteriaColor, subdued ? .16 : .96, size * (subdued ? .75 : 1), isYeast ? 0 : -1 - (agent.id * .618 % 1));
     }
+    // Living cells provide context in scalar views; gas glints stay in living views.
+    if (fieldContext) return;
     if (view.motion) {
       for (const bubble of s.gas.bubbles) {
         liquidPosition(s, bubble.x, bubble.y, bubble.z, p);
@@ -194,22 +201,19 @@ export function createScene(canvas) {
       }
   }
   function emitMetabolicInteractions(view, s, p, mark, mate, maxPoints) {
-    const selected = { sugar: 'sugar', oxygen: 'oxygen', ethanol: 'ethanol', acidity: 'acid', co2: 'co2' }[view.overlay];
-    if (view.overlay !== 'organisms' && !selected) return;
+    if (view.overlay !== 'organisms') return;
     activeBacteria.length = 0;
     for (let i = 0; i < s.agents.length; i++) {
       const a = s.agents[i];
       if (a.type === 'bacteria' && ((a.metabolism?.ethanol ?? 0) + (a.metabolism?.acid ?? 0)) > .01)
         activeBacteria.push(a);
     }
-    const packetStride = view.overlay === 'organisms' ? 4 : 8;
     for (let idx = 0; idx < s.agents.length && state.count < maxPoints; idx++) {
       const agent = s.agents[idx];
       liquidPosition(s, agent.x, agent.y, agent.z, p);
       const isYeast = agent.type === 'yeast';
-      if (agent.id % packetStride === 0) {
-        for (const packet of reactionPackets(agent, view.motion)) {
-          if (selected && packet.name !== selected) continue;
+      if (agent.id % 8 === 0) {
+        for (const packet of reactionPackets(agent, view.motion, activityTurnover(view, agent))) {
           if (state.count >= maxPoints)
             break;
           const span = packet.intake ? 1 - packet.phase : packet.phase;
@@ -245,7 +249,7 @@ export function createScene(canvas) {
           const linkAlpha = (1 - bestD2 / .026) * (view.overlay === 'organisms' ? .62 : .42) * (.45 + .55 * fluxScale);
           trailVertex(p, normal, yeastColor, linkAlpha * .4, 6);
           trailVertex(mate, normal, bacteriaColor, linkAlpha * .4, 6);
-          const pulse = ((s.day * (24 + 28 * fluxScale) + agent.id * .17) % 1 + 1) % 1;
+          const pulse = (activityTurnover(view, agent) * .22 + agent.id * .17) % 1;
           mark[0] = p[0] + (mate[0] - p[0]) * pulse;
           mark[1] = p[1] + (mate[1] - p[1]) * pulse;
           mark[2] = p[2] + (mate[2] - p[2]) * pulse;
@@ -256,6 +260,9 @@ export function createScene(canvas) {
   }
   function synchronize(view) {
     const s = view.sim, coverage = s.coverage(), thermalOverlay = view.overlay === 'temperature';
+    const field = fieldView(view.overlay), chemical = field?.chemical;
+    const scalar = thermalOverlay || Boolean(chemical);
+    const range = chemical || view.overlay === 'flow' ? fieldRange(s, view.overlay) : null;
     renderSim = s;
     renderHeight = Math.max(100, view.canvas.clientHeight);
     let deepestSurface = 0;
@@ -286,30 +293,27 @@ export function createScene(canvas) {
     // 1. Reserve primary capacity for streams/droplets, living organisms, and gas bubbles/pockets.
     // Transfer droplets intentionally travel outside the vessel.
     state.stream = buildStreams(state.streams, s, (...args) => addPoint(...args, false));
-    emitOrganismsAndGas(view, s, p, old, mark);
+    // Keep actual cells visible without competing with the quantitative samples.
+    emitOrganismsAndGas(view, s, p, old, mark, scalar);
     // 2. Emit metabolic packets and cross-feeding links within a bounded budget.
     emitMetabolicInteractions(view, s, p, mark, mate, Math.min(6800, state.count + 3200));
     // Temperature is a scalar volume, sampled at distributed tracer positions.
     // Stepping a flattened grid by nx aliases every sample to one x column.
-    const thermal = thermalOverlay ? temperatureRange(s) : null, thermalTint = [0, 0, 0];
+    const thermal = thermalOverlay ? fieldRange(s, 'temperature') : null, thermalTint = [0, 0, 0], scalarTint = [0, 0, 0];
     // 4. Fill remaining capacity with ambient chemical tracers and flow streaks.
-    const selected = ['sugar', 'oxygen', 'ethanol', 'acidity', 'co2'].indexOf(view.overlay);
     for (let i = 0; i < particles.length && state.count < 8192; i += 3) {
       const x = particles[i], y = particles[i + 1], z = particles[i + 2], index = s.index(x, y, z);
       const heat = thermal ? Math.max(-1, Math.min(1, (s.temperature[index] - thermal.centre) / thermal.extent)) : 0;
-      const [amount, fieldTint] = selected >= 0 ? fieldColor(s, index, selected) : [1, thermal ? teaColor(0, heat, 'temperature', thermalTint) : FLOW_COLOR];
-      const color = fieldTint;
-      if (amount < .004)
+      const amount = range ? fieldAmount(s, view.overlay, index) : 1;
+      const fieldTint = chemical ? CHEMICAL_COLORS[chemical] : thermal ? teaColor(0, heat, 'temperature', thermalTint) : FLOW_COLOR;
+      const color = range ? scalarColor(fieldTint, fieldFraction(amount, range), scalarTint) : fieldTint;
+      if (range && amount <= 0)
         continue;
       liquidPosition(s, x, y, z, p);
-      const concentration = Math.min(1, amount);
-      addPoint(p, color, selected >= 0 ? .65 * Math.sqrt(concentration) : view.overlay === 'liquid' ? .20 : .24, selected >= 0 ? 2.2 : 1.8);
-      if (thermal && i / 3 % 3 === 0)
-        addPoint(p, color, .11 + .10 * Math.abs(heat), 42, 2);
-      if (selected >= 0 && i / 3 % 10 === 0)
-        addPoint(p, color, .16 * concentration, 34 + concentration * 10, 2);
+      addPoint(p, color, range || thermal ? .72 : view.overlay === 'liquid' ? .20 : .24,
+        range || thermal ? 3.5 : 1.8, range || thermal ? 4 : 0);
       if (view.motion && (view.overlay === 'flow' || view.overlay === 'liquid') && i / 3 % 7 === 0) {
-        emitCurrentPath(s, x, y, z, FLOW_COLOR, view.overlay === 'liquid' ? .16 : .48);
+        emitCurrentPath(s, x, y, z, FLOW_COLOR, view.overlay === 'liquid' ? .16 : .48, range);
       }
     }
     state.pointRevision = (state.pointRevision || 0) + 1;
@@ -389,6 +393,7 @@ export function createScene(canvas) {
     gl.uniform2f(pointUniforms.Tilt, Math.cos(tilt), Math.sin(tilt));
     gl.uniform2f(pointUniforms.TiltDirection, pose.x, pose.z);
     gl.uniform1f(pointUniforms.Ratio, ratio);
+    gl.uniform1f(pointUniforms.Zoom, Math.max(1, Math.min(3, view.camera.zoom || 1)));
     gl.bindVertexArray(pointVao);
     gl.bindBuffer(gl.ARRAY_BUFFER, pointBuffer);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, state.points.subarray(0, state.count * 9));

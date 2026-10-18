@@ -6,8 +6,7 @@ import { sampleSurface } from '../sim/spatial.js';
 import { filmPoint } from '../sim/film-body.js';
 import { phFromAcids } from '../sim/chemistry.js';
 import { SPOUT } from './streams.js';
-import { CHEMICAL_COLORS } from '../metabolism.js';
-import { temperatureRange } from './palette.js';
+import { temperatureRange, temperatureColor } from './palette.js';
 const WATER_COLS = 64, WATER_LEVELS = 10;
 const WATER_RIM = Array.from({ length: WATER_COLS + 1 }, (_, col) => {
   const angle = col / WATER_COLS * Math.PI * 2;
@@ -25,11 +24,7 @@ const waterHeight = new Float64Array(WATER_COLS + 1);
 // tea polyphenols lighten from deep mahogany-russet into luminous golden-amber.
 export function teaColor(ph, heat = 0, overlay = 'liquid', out = [0, 0, 0]) {
   if (overlay === 'temperature') {
-    const t = clamp(heat * .5 + .5, 0, 1);
-    out[0] = .12 + .86 * t * t;
-    out[1] = .48 + .26 * Math.sin(t * Math.PI) - .14 * t;
-    out[2] = .82 * (1 - t);
-    return out;
+    return temperatureColor(heat, out);
   }
   const acid = clamp((4.55 - ph) / 1.35, 0, 1);
   const warm = clamp(heat, 0, 1);
@@ -252,16 +247,4 @@ export function buildFilm(mesh, sim) {
       wall(a, b);
     }
   }
-}
-export function fieldColor(sim, index, channel) {
-  const f = sim.fields;
-  if (channel === 0)
-    return [(f.sucrose[index] + f.glucose[index] + f.fructose[index]) / 100, CHEMICAL_COLORS.sugar];
-  if (channel === 1)
-    return [f.oxygen[index] / .6, CHEMICAL_COLORS.oxygen];
-  if (channel === 2)
-    return [f.ethanol[index] / 8, CHEMICAL_COLORS.ethanol];
-  if (channel === 3)
-    return [(f.acetic[index] + f.gluconic[index]) / 3, CHEMICAL_COLORS.acid];
-  return [f.co2[index] / 5, CHEMICAL_COLORS.co2];
 }

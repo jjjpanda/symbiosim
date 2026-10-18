@@ -14,13 +14,13 @@ The simulation owns state and time; the renderer reads that state. One 3D scene 
 
 Gas pockets store inventory. Their pressure, load capacities and connected-region threshold account for cell area. Intact cellulose blocks gas; escape needs a real lifted edge or wall opening. Storage pressure alone does not create a hole.
 
-`sim/transfer-clock.js` compresses displayed transfer duration to about 1–3 seconds while retaining differences in amount and hydraulic head. `main.js` uses that clock independently of biological speed. The engine still advances each exchange through a bounded .12-day biological phase; displayed jet flow is a hydraulic approximation of that conservative exchange, not a resolved outlet boundary condition.
+`sim/transfer-clock.js` compresses displayed transfer duration to about 1–3 seconds while retaining differences in amount and hydraulic head. `main.js` uses that clock independently of biological speed. `swirl.js` owns the accelerating press-and-hold lifecycle; `history.js` shares history formatting and observation caches between the field card and dialog. `fields.js` defines adaptive scalar ranges, field statistics and history mappings for both UI and rendering. The engine still advances each exchange through a bounded .12-day biological phase; displayed jet flow is a hydraulic approximation of that conservative exchange, not a resolved outlet boundary condition.
 
 Version-13 snapshots include auto-skimming preferences, count and exported material. Vessel orientation now includes an optional depth tilt (`tiltZ`); older snapshots restore it as zero. A radial tilt limit applies across both axes, and the surface, buoyancy, bubble rise and shared scene transform use the same orientation. Older versions receive the enabled default and zero counters. Version 12 added the mother pose and momentum; versions 1–11 migrate to an identity pose. State arrays are copied on snapshot/restore; render geometry and solver scratch are not persisted. Continuation is deterministic within the current implementation.
 
 ## One renderer
 
-`renderer.js` presents one offscreen WebGL canvas. The main view uses the available space, with no click-to-zoom path. `render/scene.js` owns its resources and render order. It draws opaque objects and particles to one scene framebuffer, copies colour into a second target sharing the same depth attachment, then draws transparent water, glass and streams using the scene colour for refraction. It presents colour only to the browser. The camera and depth tests are shared by every object.
+`renderer.js` presents one offscreen WebGL canvas. The main view uses the available space. Wheel and button zoom share the perspective matrix and particle size scale; Reset view restores orbit and zoom. `render/scene.js` owns its resources and render order. It draws opaque objects and particles to one scene framebuffer, copies colour into a second target sharing the same depth attachment, then draws transparent water, glass and streams using the scene colour for refraction. It presents colour only to the browser. The camera and depth tests are shared by every object.
 
 The small render modules have separate roles:
 
@@ -35,6 +35,7 @@ The small render modules have separate roles:
 | `camera.js` | Orbit, camera-relative two-axis tilt and pointer/keyboard controls |
 | `voxel.js` | Two organism ID locks, actual spatial neighbors, bounded simulation-time paths, molecular reaction flows and local readings |
 | `palette.js` | Shared organism colors for the vessel and tracking views |
+| `activity.js` | Bounded visual reaction pace without changing simulation metabolism |
 | `webgl.js` | Shader compilation and program linking |
 
 The jar profile includes the inner wall, shoulder, rolled rim and base. The film clips its actual density contour and uses material UVs, so camera orbit cannot slide its texture across the surface. Particles have a minimum readable point size and meaningful opacity; cells and gas use the same scene depth. Chemical and thermal fields are sampled in 3D rather than drawn as projected Canvas strips.

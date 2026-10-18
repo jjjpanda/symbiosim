@@ -42,11 +42,14 @@ export function cameraMatrix(width, height, orbit = {}, tilt = 0) {
   const pose = typeof tilt === 'number' ? { angle: tilt, x: 1, z: 0 } : tilt;
   const c = Math.cos(pose.angle), s = Math.sin(pose.angle);
   const yaw = (orbit.yaw || 0) * Math.PI / 180, elevation = (orbit.elevation || 24) * Math.PI / 180;
-  const distance = 3.1 * Math.max(1, height / width * .78) * (1 + .45 * Math.abs(s)), target = .72;
+  const zoom = Math.max(1, Math.min(3, orbit.zoom || 1));
+  // Ease the aim from the overview into the lower third as the view magnifies.
+  const focus = (zoom - 1) / 2;
+  const distance = 3.1 * Math.max(1, height / width * .78) * (1 + .45 * Math.abs(s)), target = .72 + (HEIGHT * .29 - .72) * focus;
   const eye = [Math.sin(yaw) * Math.cos(elevation) * distance, target + Math.sin(elevation) * distance, Math.cos(yaw) * Math.cos(elevation) * distance];
   const z = [eye[0], eye[1] - target, eye[2]].map(v => v / distance);
   const x = [Math.cos(yaw), 0, -Math.sin(yaw)], y = [z[1] * x[2], z[2] * x[0] - z[0] * x[2], -z[1] * x[0]];
-  const f = 1 / Math.tan(34 * Math.PI / 360), aspect = width / height, near = .05, far = 20;
+  const f = zoom / Math.tan(34 * Math.PI / 360), aspect = width / height, near = .05, far = 20;
   const project = (p, out = [0, 0, 0]) => {
     const along = p[0] * pose.x + p[2] * pose.z, up = p[1] - HEIGHT / 2;
     const offset = along * (c - 1) + up * s;

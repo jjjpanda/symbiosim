@@ -1,7 +1,7 @@
 import { Simulation, REGIMES } from './engine.js';
 import { draw } from './renderer.js';
-import { vesselTemplate, OVERLAYS } from './template.js';
-import { HISTORY_CHARTS, drawChart, historyWindow, readingDeltas, formatChartValue } from './charts.js';
+import { vesselTemplate, OVERLAYS, THEME_ICONS } from './template.js';
+import { readingDeltas } from './charts.js';
 import { advanceParticles } from './render/particles.js';
 import { exchangeSpeed } from './sim/transfer-clock.js';
 import { bindCamera, defaultCamera, turnCamera, tipVessel } from './render/camera.js';
@@ -9,8 +9,11 @@ import { vesselTilt } from './sim/vessel.js';
 import { pellicleStats, SKIM_THICKNESS } from './sim/pellicle.js';
 import { teaColor } from './render/objects.js';
 import { pickVoxel, renderVoxel } from './render/voxel.js';
-import { FIELD_VIEWS } from './fields.js';
-import { temperatureRange } from './render/palette.js';
+import { fieldView, fieldRange, formatFieldValue } from './fields.js';
+import { temperatureRange, cssColor } from './render/palette.js';
+import { CHEMICAL_COLORS } from './metabolism.js';
+import { updateFieldHistory, updateHistoryDialog } from './history.js';
+import { bindSwirl, startSwirl, stopSwirl, advanceSwirl, updateSwirlSpeed } from './swirl.js';
 
 const SPEEDS = [1, 4, 12, 30, 60];
 const SETTINGS = [['room', 1], ['swing', 1], ['permeability', 100]];
@@ -54,14 +57,17 @@ export class SymbiosimVessel extends HTMLElement {
       this.motion = !this.reducedMotion.matches;
       this.draw();
     });
-    document.addEventListener('visibilitychange', this.visibilityHandler = () => { this.lastFrame = 0; this.pending = 0; });
+    document.addEventListener('visibilitychange', this.visibilityHandler = () => { this.lastFrame = 0; this.pending = 0; stopSwirl(this); });
+    this.ownerDocument?.defaultView?.addEventListener('blur', this.blurHandler = () => stopSwirl(this));
     this.frameHandle = requestAnimationFrame(t => this.frame(t));
   }
 
   disconnectedCallback() {
+    stopSwirl(this);
     cancelAnimationFrame(this.frameHandle); this.resizeObserver?.disconnect();
     this.dark.removeEventListener('change', this.paletteHandler); document.removeEventListener('visibilitychange', this.visibilityHandler);
     this.reducedMotion.removeEventListener('change', this.motionHandler);
+    this.ownerDocument?.defaultView?.removeEventListener('blur', this.blurHandler);
     this.sceneRenderer?.dispose(); this.sceneRenderer = undefined;
   }
 
@@ -70,6 +76,7 @@ export class SymbiosimVessel extends HTMLElement {
   readPalette() {
     const style = getComputedStyle(this);
     this.palette = Object.fromEntries(['fg', 'warm', 'cool', 'gas'].map(key => [key, style.getPropertyValue('--' + key).trim()]));
+    for (const [chemical, color] of Object.entries(CHEMICAL_COLORS)) this.palette[chemical] = cssColor(color);
     this.updateReadings(); this.draw();
   }
   announce(text) { this.$('[role=status]').textContent = text; }
@@ -77,11 +84,11 @@ export class SymbiosimVessel extends HTMLElement {
   selectField(id) {
     if (!OVERLAYS.includes(id)) return;
     this.overlay = id;
-    this.updateField(); this.draw();
+    this.updateField(); this.updateFieldHistory(); this.draw();
   }
 
   updateField() {
-    const field = FIELD_VIEWS.find(item => item.id === this.overlay);
+    const field = fieldView(this.overlay);
     this.$('#overlay').value = field.id;
     this.$('#field-title').textContent = field.name;
     this.$('#field-description').textContent = field.note;
@@ -90,20 +97,15 @@ export class SymbiosimVessel extends HTMLElement {
     this.$('#field-high').textContent = field.ends[1];
     const scale = this.$('#field-scale');
     scale.hidden = field.id === 'liquid' || field.id === 'organisms';
-    scale.style?.setProperty('--field-color', field.color);
-    scale.classList?.toggle('thermal', field.id === 'temperature');
+    scale.style?.setProperty('--field-gradient', field.gradient);
     let reading = '';
-    if (field.max) {
-      let total = 0, peak = 0;
-      const f = this.sim.fields;
-      for (let i = 0; i < this.sim.n; i++) {
-        const amount = field.id === 'sugar' ? f.sucrose[i] + f.glucose[i] + f.fructose[i]
-          : field.id === 'acidity' ? f.acetic[i] + f.gluconic[i] : f[field.id][i];
-        total += amount; peak = Math.max(peak, amount);
-      }
-      const unit = field.ends[1].replace(/^[\d.]+ /, '').replace('+', '');
-      reading = `Mean ${fmt(total / this.sim.n, 2)} · peak ${fmt(peak, 2)} ${unit}`;
-      if (peak < .004 * field.max) reading += ' · trace amounts; clouds appear as it accumulates';
+    if (field.chemical || field.id === 'flow') {
+      const { mean, peak, low, high, span } = fieldRange(this.sim, field.id);
+      this.$('#field-low').textContent = `${formatFieldValue(low, span)} ${field.unit}`;
+      this.$('#field-high').textContent = `${formatFieldValue(high, span)} ${field.unit}`;
+      reading = `Mean ${formatFieldValue(mean, span)} · peak ${formatFieldValue(peak, span)} ${field.unit} · relative color scale`;
+      if (peak === 0) reading += ' · absent';
+      else if (peak < 1e-6) reading += ' · trace amounts';
     } else if (field.id === 'temperature') {
       const { low, high } = temperatureRange(this.sim);
       this.$('#field-low').textContent = `${fmt(low)}°C`;
@@ -162,7 +164,8 @@ export class SymbiosimVessel extends HTMLElement {
     this.addEventListener('keydown', e => {
       const target = e.composedPath()[0];
       if (e.ctrlKey || e.metaKey || e.altKey || target.matches?.('input, select, summary') || (target.matches?.('button') && [' ', 'Enter'].includes(e.key)) || this.$('#panel').open || this.$('#detail').open) return;
-      if (this.command(e.key.toLowerCase(), e.shiftKey)) e.preventDefault();
+      if (e.key.toLowerCase() === 'w') { startSwirl(this); e.preventDefault(); }
+      else if (this.command(e.key.toLowerCase(), e.shiftKey)) e.preventDefault();
     });
     this.$('#speed').oninput = e => { this.sim.speed = Number(e.target.value); this.updateControls(false); };
     this.$$('[data-preset]').forEach(button => button.onclick = () => {
@@ -207,10 +210,16 @@ export class SymbiosimVessel extends HTMLElement {
     this.$$('dialog').forEach(dialog => dialog.onclick = e => { if (e.target !== dialog) return; const box = dialog.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) dialog.close(); });
     this.$$('[data-close]').forEach(button => button.onclick = () => this.$('#detail').close());
     this.$$('[data-chart]').forEach(button => button.onclick = () => {
-      this.updateDetail(); this.$('#detail').showModal();
-      this.$('#history-title-' + button.dataset.chart)?.scrollIntoView({ block: 'nearest' });
+      this.openHistory(button.dataset.chart);
     });
-    bindCamera(this); this.updateCamera();
+    this.$('#field-history-open').onclick = () => this.openHistory(fieldView(this.overlay).history);
+    bindSwirl(this); bindCamera(this); this.updateCamera();
+  }
+
+  openHistory(kind) {
+    stopSwirl(this);
+    this.updateDetail(); this.$('#detail').showModal();
+    this.$('#history-title-' + kind)?.scrollIntoView({ block: 'nearest' });
   }
 
   command(key, shift = false) {
@@ -231,12 +240,13 @@ export class SymbiosimVessel extends HTMLElement {
     }
     else if (key === 'n') {
       if (!confirm('Start a new vessel? The current culture will be replaced.')) return true;
+      stopSwirl(this);
       this.sim = new Simulation({ seed: seed(), width: this.sim.nx, height: this.sim.ny, depth: this.sim.nz });
       this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
       this.pending = 0; this.particles = null; this.activePreset = null; this.updateControls();
     }
     else if (key === 't') this.setAttribute('theme', this.isDark() ? 'light' : 'dark');
-    else if (key === 'c' || key === 'e') { this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
+    else if (key === 'c' || key === 'e') { stopSwirl(this); this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
     else if (key === 'f') { this.sim.speed = SPEEDS.find(speed => speed > this.sim.speed) || SPEEDS[0]; this.updateControls(); }
     else if (key === 'v') this.selectField(OVERLAYS[(OVERLAYS.indexOf(this.overlay) + 1) % OVERLAYS.length]);
     else return false;
@@ -245,6 +255,8 @@ export class SymbiosimVessel extends HTMLElement {
 
   intervene(amount, action) { this.announce(amount ? `${action}: ${Math.round(amount * 100)}% of capacity.${this.sim.playing ? '' : ' Paused; Resume or Step to advance.'}` : 'No volume available.'); this.updateReadings(); this.draw(); }
   updateCamera() {
+    this.$('#camera-zoom').value = `${fmt(this.camera.zoom || 1, 2)}×`;
+    this.$$('[data-zoom]').forEach(button => { button.disabled = Number(button.dataset.zoom) > 1 ? this.camera.zoom >= 3 : this.camera.zoom <= 1; });
     const tilt = Math.abs(vesselTilt(this.sim));
     this.$('#jar-tilt-output').value = `${Math.round(tilt * 180 / Math.PI)}° tilt`;
     this.$('#jar-tilt-output').hidden = tilt < .008;
@@ -262,6 +274,7 @@ export class SymbiosimVessel extends HTMLElement {
     }
     this.$('#speed-output').textContent = `${fmt(s.speed, 0)} days/min`;
     this.$('[data-k="t"]').setAttribute('aria-label', `Switch to ${this.isDark() ? 'light' : 'dark'} theme`);
+    this.$('[data-k="t"] path').setAttribute('d', this.isDark() ? THEME_ICONS.sun : THEME_ICONS.moon);
     this.$$('[data-preset]').forEach(button => {
       const active = button.dataset.preset === this.activePreset;
       button.classList?.toggle('on', active);
@@ -272,10 +285,9 @@ export class SymbiosimVessel extends HTMLElement {
     this.$('#starter').textContent = `Add starter ${this.$('#starter-amount').value}%`;
   }
 
-  chart(svg, kind, window) { drawChart(svg, this.sim.history, kind, this.palette, window); }
   updateReadings() {
     if (this.camera) this.updateCamera();
-    this.updateField();
+    this.updateField(); updateSwirlSpeed(this);
     const s = this.sim, counts = s.counts();
     for (const id of ['drain', 'pour', 'starter']) this.$('#' + id).disabled = Boolean(s.care.transfer);
     const film = pellicleStats(s);
@@ -306,30 +318,12 @@ export class SymbiosimVessel extends HTMLElement {
       const rounded = Number(change?.toFixed(digits));
       this.$('#' + key + '-delta').textContent = deltas ? `${rounded > 0 ? '+' : ''}${fmt(rounded, digits)}${unit} / day` : '— / day';
     }
-    this.$('#counts').innerHTML = `<i class="warm">${counts.yeast} yeast</i><i class="cool">${counts.bacteria} bacteria</i>`;
-    const lastSample = s.history.at(-1);
-    if (this.chartHistory !== s.history || this.chartSample !== lastSample || this.chartPalette !== this.palette) {
-      this.chart(this.$('#culture-chart'), 'culture');
-      this.chartHistory = s.history;
-      this.chartSample = lastSample;
-      this.chartPalette = this.palette;
-    }
+    this.updateFieldHistory();
     if (this.$('#detail').open) this.updateDetail();
   }
-  updateDetail() {
-    const history = this.sim.history, sample = history.at(-1);
-    if (this.detailHistory === history && this.detailSample === sample && this.detailPalette === this.palette) return;
-    const window = historyWindow(this.sim.history);
-    this.$('#history-window').textContent = `Days ${fmt(window.start, 2)}–${fmt(window.end, 2)} · latest recorded readings · up to 240 retained samples`;
-    for (const { kind, title, unit } of HISTORY_CHARTS) {
-      const svg = this.$('#history-chart-' + kind);
-      drawChart(svg, history, kind, this.palette, window, true);
-      svg.setAttribute('aria-label', `${title}, day ${fmt(window.start, 2)} to ${fmt(window.end, 2)}; ${unit}.`);
-      const keys = kind === 'culture' ? ['yeast', 'bacteria'] : [kind];
-      this.$('#history-reading-' + kind).textContent = keys.map(key => `${formatChartValue(sample?.[key], key)}${kind === 'culture' ? ' ' + key : ''}`).join(' · ');
-    }
-    this.detailHistory = history; this.detailSample = sample; this.detailPalette = this.palette;
-  }
+
+  updateFieldHistory() { updateFieldHistory(this); }
+  updateDetail() { updateHistoryDialog(this); }
   resize() {
     const ratio = this.ratio = Math.min(devicePixelRatio || 1, 2);
     if (this.canvas.clientWidth > 0 && this.canvas.clientHeight > 0) {
@@ -345,6 +339,7 @@ export class SymbiosimVessel extends HTMLElement {
   }
   frame(time) {
     const elapsed = this.lastFrame ? Math.min(.1, (time - this.lastFrame) / 1000) : 0; this.lastFrame = time;
+    if (!document.hidden) advanceSwirl(this, elapsed);
     this.pending = this.sim.playing && !document.hidden ? (this.pending || 0) + elapsed : 0;
     let advanced = false;
     // Leave room for normal RAF timing jitter without halving a 60 Hz display.

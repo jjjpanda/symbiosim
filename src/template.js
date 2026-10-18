@@ -4,8 +4,14 @@ import { FIELD_VIEWS } from './fields.js';
 export { OVERLAYS } from './fields.js';
 
 const icon = path => `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${path}"/></svg>`;
+export const THEME_ICONS = {
+  sun: 'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8ZM12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4',
+  moon: 'M20.7 13A9 9 0 0 1 11 3.3 9 9 0 1 0 20.7 13Z'
+};
 const icons = {
   pause: icon('M9 5v14M15 5v14'),
+  step: icon('m5 5 10 7-10 7zM19 5v14'),
+  theme: icon(THEME_ICONS.moon),
   conditions: icon('M4 7h16M4 17h16M9 4v6M15 14v6')
 };
 
@@ -13,16 +19,15 @@ export function vesselTemplate() {
   return `<link rel="stylesheet" href="${new URL('./style.css', import.meta.url)}">
 <div class="layout" data-view="split">
   <header class="masthead">
-    <div class="identity"><h1>symbiosim<span class="identity-dot" aria-hidden="true"></span></h1><p>A living fermentation</p></div>
+    <div class="identity"><h1>symbiosim<span class="identity-dot" aria-hidden="true"></span></h1></div>
     <nav class="glass" aria-label="Simulation controls">
       <button data-k=" " class="play-button" title="Run or pause · Space">${icons.pause}<span id="play"></span></button>
-      <button data-k="s" title="Pause and advance 0.08 days · S">Step</button>
-      <button data-chart="all">History</button>
-      <button data-k="t">Theme</button>
+      <button data-k="s" title="Pause and advance 0.08 days · S">${icons.step}<span>Step</span></button>
+      <button data-k="t">${icons.theme}<span>Theme</span></button>
       <button data-k="c" aria-label="Conditions" title="Conditions · C">${icons.conditions}<span>Conditions</span></button>
     </nav>
   </header>
-  <aside class="left-rail" aria-label="Tracked organisms and culture">
+  <aside class="left-rail" aria-label="Tracked organisms">
     <div class="cell-samples" aria-label="Live organism close-ups">
       ${[['yeast', 'Yeast', 'Sugar → ethanol + CO₂'], ['bacteria', 'Acetic acid bacterium', 'Ethanol + oxygen → acids']].map(([type, name, reaction]) => `
       <section class="voxel-card glass-card" aria-label="${name} tracking voxel">
@@ -32,12 +37,11 @@ export function vesselTemplate() {
       </section>`).join('')}
       <p class="sample-hint">The ring follows one cell; nearby cells and its path give context. Molecule shapes show active uptake and products.</p>
     </div>
-    <button class="trend glass-card" data-chart="culture" aria-label="Open culture population history"><span class="section-label">Culture <span aria-hidden="true">↗</span></span><span id="counts"></span><svg id="culture-chart" viewBox="0 0 120 30" preserveAspectRatio="none" aria-hidden="true"></svg></button>
 
     <div class="legend" aria-label="Organism legend"><span><b class="yeast-mark warm" aria-hidden="true"></b> yeast</span><span><b class="bacteria-mark cool" aria-hidden="true"></b> bacteria</span><span><b class="film-mark warm" aria-hidden="true"></b> cellulose</span><span>◎ tracked cell</span></div>
   </aside>
   <section class="field" aria-label="Fermentation vessel">
-    <canvas id="canvas" tabindex="0" role="img" aria-label="Drag to orbit; Shift-drag to tip the jar. Arrow keys turn the view; Shift + arrow keys tip the jar; R resets the view."></canvas>
+    <canvas id="canvas" tabindex="0" role="img" aria-label="Drag to orbit; Shift-drag to tip the jar. Arrow keys turn the view; Shift + arrow keys tip the jar; Scroll or use + / − to zoom; R resets the view and zoom."></canvas>
     <div class="hud"><span id="day"></span><span id="state"></span></div>
     <div class="mobile-readings" aria-hidden="true"><span>Tea <b id="mobile-temperature"></b></span><span>Sugar <b id="mobile-sugar"></b></span><span>pH <b id="mobile-ph"></b></span></div>
     <div class="vessel-tools" role="group" aria-label="Camera and vessel interaction">
@@ -46,12 +50,15 @@ export function vesselTemplate() {
       <button type="button" data-camera="up" aria-label="Raise camera" title="Raise view">↑</button>
       <button type="button" data-camera="down" aria-label="Lower camera" title="Lower view">↓</button>
       <button type="button" data-camera="right" aria-label="Turn camera right" title="Turn right">→</button>
+      <button type="button" data-zoom="1.25" aria-label="Zoom into jar" title="Zoom in">+</button>
+      <button type="button" data-zoom="0.8" aria-label="Zoom out of jar" title="Zoom out">−</button>
+      <output id="camera-zoom" aria-label="Camera zoom">1×</output>
       <button id="tilt-mode" type="button" aria-pressed="false" title="Switch dragging and direction buttons between orbiting and tipping the jar">Tilt jar</button>
       <button id="upright-jar" type="button">Set upright</button>
       <button id="reset-camera" type="button">Reset view</button>
       <output id="jar-tilt-output" aria-label="Current jar tilt"></output>
     </div>
-    <div class="field-footer"><span>KOMBUCHA</span><span>drag orbit · shift-drag tilt</span></div>
+    <div class="field-footer"><span>KOMBUCHA</span><span>drag orbit · scroll zoom · shift-drag tilt</span></div>
   </section>
   <aside class="instruments" aria-label="Controls and readings">
 
@@ -63,24 +70,31 @@ export function vesselTemplate() {
     <div class="settings glass-card">
       <label><span>Pace</span><output id="speed-output" for="speed"></output><input id="speed" type="range" min="1" max="60" step="1" aria-label="Simulated days per minute"></label>
     </div>
+    <section class="field-browser glass-card" aria-label="Visualization">
+      <label class="field-select"><span>Field</span><select id="overlay" aria-label="Vessel visualization">${FIELD_VIEWS.map(({id,name}) => `<option value="${id}">${name}</option>`).join('')}</select></label>
+      <div id="field-scale" class="field-scale" aria-hidden="true"></div><div class="field-scale-labels"><span id="field-low"></span><span id="field-high"></span></div>
+      <output id="field-reading" aria-live="off"></output>
+      <section class="field-history" aria-labelledby="field-history-title">
+        <div class="section-label"><span id="field-history-title"></span><button id="field-history-open" class="pill-btn">Expand</button></div>
+        <output id="field-history-reading" aria-live="off"></output>
+        <svg id="field-history-chart" viewBox="0 0 320 160" role="img" aria-labelledby="field-history-title"></svg>
+        <p id="field-history-note" class="hint"></p>
+      </section>
+      <details class="field-guide"><summary>Reading the field</summary><h3 id="field-title">Living tea</h3><p id="field-description"></p><p id="field-key"></p><p>Muted yellow ovals are yeast; blue rods are bacteria. Rings mark the cells followed in the close-ups. Cell activity shows active uptake, products and exchanges.</p></details>
+    </section>
     <section class="care-card glass-card" aria-label="Vessel actions">
-      <div class="care-heading"><span class="section-label">Vessel actions</span><button data-k="e" class="pill-btn">Recipe &amp; care</button></div>
+      <div class="care-heading"><span class="section-label">Vessel actions</span></div>
       <div class="fluid-actions" aria-label="Interact with the tea">
         <button id="pour" title="Pour the configured tea recipe">Pour 15%</button>
         <button id="drain" title="Drain from the lower outlet">Drain 15%</button>
         <button id="starter" title="Add the starter amount and yeast share set in Conditions">Add starter 8%</button>
         <button id="skim" title="Remove 80% of the film; the rest can regrow">Skim film</button>
       </div>
-      <button data-k="w" class="swirl-button" title="Add rotational momentum · W">Swirl tea</button>
+      <button id="swirl" aria-pressed="false" class="swirl-button" title="Press and hold to build rotational momentum · W"><span>Hold to swirl tea</span><output id="swirl-speed" aria-live="off" aria-label="Estimated liquid rotational speed" title="Estimated visible rotations per minute from the liquid velocity. Paused readings are queued until Resume or Step.">0.0 rpm</output></button>
       <div class="culture-notes"><span id="care-status"></span><span id="exchange-count"></span></div>
       <section class="film-readings" aria-label="Pellicle readings"><div class="section-label">Pellicle <strong id="film-thickness" title="Mean thickness of covered patches, using the illustrative visual scale."></strong></div><progress id="film-load" max="2.4" value="0" aria-label="Mean pellicle thickness in illustrative millimeters"></progress><span id="pellicle-status"></span><span id="film-care"></span></section>
     </section>
-    <section class="field-browser glass-card" aria-label="Visualization">
-      <label class="field-select"><span>Field</span><select id="overlay" aria-label="Vessel visualization">${FIELD_VIEWS.map(({id,name}) => `<option value="${id}">${name}</option>`).join('')}</select></label>
-      <div id="field-scale" class="field-scale" aria-hidden="true"></div><div class="field-scale-labels"><span id="field-low"></span><span id="field-high"></span></div>
-      <output id="field-reading" aria-live="off"></output>
-      <details class="field-guide"><summary>Reading the field</summary><h3 id="field-title">Living tea</h3><p id="field-description"></p><p id="field-key"></p><p>Amber ovals are yeast; teal rods are bacteria. Rings mark the cells followed in the close-ups. Cell activity shows active uptake, products and exchanges.</p></details>
-    </section>
+
     <p class="action-status" role="status" aria-live="polite"></p>
   </aside>
 </div>
@@ -105,6 +119,6 @@ export function vesselTemplate() {
       <p id="history-note-${kind}" class="hint">${note}</p>
     </section>`).join('')}
   </div>
-  <p class="hint">Each graph has its own value scale; time axes show simulated days. Culture: solid amber yeast, dashed teal bacteria. Concentrations are illustrative model readings.</p>
+  <p class="hint">Each graph has its own value scale; time axes show simulated days. Culture: solid muted yellow yeast, dashed blue bacteria. Concentrations are illustrative model readings.</p>
 </dialog>`;
 }

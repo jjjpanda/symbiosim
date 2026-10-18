@@ -311,8 +311,10 @@ export class Simulation {
 
   record() {
     const { yeast, bacteria } = this.counts();
+    let flow = 0;
+    for (let i = 0; i < this.n; i++) flow += Math.hypot(this.vx[i], this.vy[i], this.vz[i]);
     this.history.push({ day: this.day, sugar: this.sugar(), ph: this.ph(), yeast, bacteria, temperature: this.meanTemperature(),
-      oxygen: this.mean('oxygen'), co2: this.mean('co2'), ethanol: this.mean('ethanol'), acid: this.mean('acetic') + this.mean('gluconic') });
+      oxygen: this.mean('oxygen'), co2: this.mean('co2'), ethanol: this.mean('ethanol'), acid: this.mean('acetic') + this.mean('gluconic'), flow: flow / this.n });
     if (this.history.length > 240) this.history.shift();
   }
 

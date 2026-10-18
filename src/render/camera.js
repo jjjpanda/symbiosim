@@ -1,7 +1,11 @@
 import { clamp } from '../sim/constants.js';
 import { vesselOrientation } from '../sim/vessel.js';
 
-export const defaultCamera = () => ({ yaw: 0, elevation: Math.asin(.34) * 180 / Math.PI });
+export const defaultCamera = () => ({ yaw: 0, elevation: Math.asin(.34) * 180 / Math.PI, zoom: 1 });
+
+export function zoomCamera(camera, factor) {
+  camera.zoom = clamp((camera.zoom || 1) * factor, 1, 3);
+}
 
 export function turnCamera(camera, horizontal, vertical) {
   camera.yaw = ((camera.yaw + horizontal + 180) % 360 + 360) % 360 - 180;
@@ -52,6 +56,14 @@ export function bindCamera(view) {
     if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
   };
   canvas.onpointerup = canvas.onpointercancel = canvas.onlostpointercapture = finish;
+  canvas.addEventListener?.('wheel', e => {
+    e.preventDefault();
+    zoomCamera(view.camera, Math.exp(-clamp(e.deltaY, -100, 100) * .003));
+    changed();
+  }, { passive: false });
+  view.$$?.('[data-zoom]').forEach(button => button.onclick = () => {
+    zoomCamera(view.camera, Number(button.dataset.zoom)); changed();
+  });
   view.$('#reset-camera').onclick = () => { Object.assign(view.camera, defaultCamera()); changed(); };
   view.$('#tilt-mode').onclick = () => { view.tiltMode = !view.tiltMode; changed(); };
   view.$('#upright-jar').onclick = () => { view.sim.vessel.tilt = 0; view.sim.vessel.tiltZ = 0; changed(); };

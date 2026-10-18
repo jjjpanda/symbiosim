@@ -142,7 +142,7 @@ try {
       const v=document.querySelector('symbiosim-vessel'),button=v.$(${JSON.stringify(selector)});
       button.scrollIntoView({block:'nearest'});const r=button.getBoundingClientRect();
       const x=r.left+r.width/2,y=r.top+r.height/2;
-      return {x,y,hit:v.shadowRoot.elementFromPoint(x,y)===button};
+      return {x,y,hit:v.shadowRoot.elementFromPoint(x,y)?.closest('button')===button};
     })()`);
     assert.equal(point.hit,true,selector+' must receive pointer input');
     await command('Input.dispatchMouseEvent',{type:'mousePressed',x:point.x,y:point.y,button:'left',clickCount:1});
@@ -151,14 +151,33 @@ try {
   await evaluate(`document.querySelector('symbiosim-vessel').camera.yaw=0`);
   await clickControl('[data-camera="right"]');
   assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').camera.yaw`),10);
-  await clickControl('[data-k="w"]');
+  await clickControl('[data-zoom="1.25"]');
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').camera.zoom`),1.25);
+  await clickControl('#reset-camera');
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').camera.zoom`),1);
+  assert.equal(await evaluate(`(() => {
+    const v=document.querySelector('symbiosim-vessel'), nav=v.$('nav').getBoundingClientRect();
+    return Math.abs(nav.left+nav.width/2-innerWidth/2)<2 && !v.$('.trend') && !v.$('nav [data-chart]') && !v.$('.care-heading button');
+  })()`),true,'Centered top controls without redundant buttons or culture card');
+  await evaluate(`document.querySelector('symbiosim-vessel').selectField('ethanol')`);
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$('#field-history-title').textContent`),'Ethanol history');
+  await evaluate(`document.querySelector('symbiosim-vessel').selectField('liquid')`);
+  await clickControl('#swirl');
   assert.match(await evaluate(`document.querySelector('symbiosim-vessel').$('[role=status]').textContent`),/Swirl/i);
+  assert.match(await evaluate(`document.querySelector('symbiosim-vessel').$('#swirl-speed').textContent`),/rpm/);
   const themeBefore=await evaluate(`document.querySelector('symbiosim-vessel').isDark()`);
+  const themeIconBefore=await evaluate(`document.querySelector('symbiosim-vessel').$('[data-k="t"] path').getAttribute('d')`);
   await clickControl('[data-k="t"]');
   assert.notEqual(await evaluate(`document.querySelector('symbiosim-vessel').isDark()`),themeBefore);
-  await clickControl('[data-chart="all"]');
+  assert.notEqual(await evaluate(`document.querySelector('symbiosim-vessel').$('[data-k="t"] path').getAttribute('d')`),themeIconBefore);
+  assert.equal(await evaluate(`(async () => {
+    const icons=[...document.querySelectorAll('link[rel="icon"]')];
+    const responses=await Promise.all(icons.map(icon=>fetch(icon.href)));
+    return icons.length===2 && responses.every(response=>response.ok);
+  })()`),true,'SVG and ICO favicon URLs must both load');
+  await clickControl('#field-history-open');
   assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$('#detail').open`),true);
-  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$$('.history-card').length`),8);
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$$('.history-card').length`),9);
   await clickControl('[data-close="detail"]');
   assert.equal(await evaluate(`(() => {const v=document.querySelector('symbiosim-vessel');return ['pour','drain','starter','skim'].every(id=>v.$('#'+id).closest('.care-card') && !v.$('#'+id).closest('dialog'));})()`),true);
   // Exercise actual browser pointer capture and Shift modifiers on both axes.

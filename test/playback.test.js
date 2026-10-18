@@ -3,8 +3,10 @@ import assert from 'node:assert/strict';
 import { Simulation, HARVEST_FRACTION, PRESETS, REGIMES } from '../src/engine.js';
 import { pellicleStats } from '../src/sim/pellicle.js';
 import { transferDuration, exchangeSpeed } from '../src/sim/transfer-clock.js';
-import { chartSeries } from '../src/charts.js';
+import { chartSeries, HISTORY_CHARTS } from '../src/charts.js';
 import { validateSnapshot } from '../src/sim/snapshot.js';
+import { FIELD_VIEWS } from '../src/fields.js';
+import { THEME_ICONS } from '../src/template.js';
 
 // Exercise the component's frame loop without a browser or canvas.
 globalThis.HTMLElement = class {
@@ -25,6 +27,25 @@ globalThis.customElements = { get: () => true };
 globalThis.document = { hidden: false };
 globalThis.requestAnimationFrame = () => 0;
 const { SymbiosimVessel } = await import('../src/main.js');
+
+test('the theme button shows the destination sun or moon without changing the model', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel(), before = view.sim.snapshot();
+    let dark = false;
+    const attributes = new Map();
+    view.isDark = () => dark;
+    view.$('[data-k="t"]').setAttribute = (key, value) => attributes.set(key, value);
+    view.$('[data-k="t"] path').setAttribute = (key, value) => attributes.set('path-' + key, value);
+    for (const state of [false, true, false]) {
+      dark = state; view.updateControls(false);
+      assert.equal(attributes.get('aria-label'), `Switch to ${dark ? 'light' : 'dark'} theme`);
+      assert.equal(attributes.get('path-d'), dark ? THEME_ICONS.sun : THEME_ICONS.moon);
+    }
+    assert.deepEqual(view.sim.snapshot(), before);
+  } finally { globalThis.matchMedia = previousMedia; }
+});
 test('reconnection resets frame timing and observes motion changes without leaking listeners', () => {
   const previousObserver = globalThis.ResizeObserver;
   const previousCancel = globalThis.cancelAnimationFrame;
@@ -156,12 +177,40 @@ test('History rebuilds only for new observations and leaves the culture unchange
     sim, $: node, palette: { warm: '#a74', cool: '#487', gas: '#789' }
   });
   const before = sim.snapshot();
-  view.updateDetail(); assert.equal(builds, 8);
-  view.updateDetail(); assert.equal(builds, 8);
+  view.updateDetail(); assert.equal(builds, HISTORY_CHARTS.length);
+  view.updateDetail(); assert.equal(builds, HISTORY_CHARTS.length);
   assert.deepEqual(sim.snapshot(), before);
   sim.fields.ethanol.fill(2); sim.record(); view.updateDetail();
-  assert.equal(builds, 16);
+  assert.equal(builds, HISTORY_CHARTS.length * 2);
   assert.equal(node('#history-reading-ethanol').textContent, '2.00');
+});
+
+test('field selection updates the inline graph and paused observations refresh its cache', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel(); view.draw = () => {};
+    view.palette = { warm: '#a74', cool: '#487', gas: '#789' };
+    const before = view.sim.snapshot();
+    for (const field of FIELD_VIEWS) {
+      view.selectField(field.id);
+      const chart = HISTORY_CHARTS.find(chart => chart.kind === field.history);
+      assert.equal(view.$('#field-history-title').textContent, `${chart.title} history`);
+      assert.doesNotMatch(view.$('#field-history-chart').innerHTML, /NaN|undefined|Infinity/);
+    }
+    assert.deepEqual(view.sim.snapshot(), before, 'Field selection must not modify simulation state');
+    view.selectField('ethanol');
+    view.sim.fields.ethanol.fill(2); view.sim.record(); view.updateReadings();
+    assert.equal(view.$('#field-history-reading').textContent, '2.00 g/L');
+    const cached = view.fieldObservation;
+    view.updateReadings(); assert.equal(view.fieldObservation, cached);
+    view.sim.fields.ethanol[0] = 1;
+    view.sim.fields.ethanol[view.sim.n - 1] = 3;
+    view.updateField();
+    assert.equal(view.$('#field-low').textContent, '1.00 g/L');
+    assert.equal(view.$('#field-high').textContent, '3.00 g/L');
+    assert.match(view.$('#field-reading').textContent, /relative color scale/);
+  } finally { globalThis.matchMedia = previousMedia; }
 });
 
 test('manual tea actions use the configured recipe without resuming a paused culture', () => {
@@ -213,7 +262,7 @@ test('real frame loop keeps cells moving and drives evolving currents during bot
   }
 });
 
-test('population chart caches unchanged readings and redraws on paused interventions or bounded-history appends', () => {
+test('inline culture history caches unchanged readings and redraws on paused interventions or bounded-history appends', () => {
   const previousMedia = globalThis.matchMedia;
   globalThis.matchMedia = () => ({ matches: false });
   try {
@@ -222,16 +271,17 @@ test('population chart caches unchanged readings and redraws on paused intervent
     view.palette = { fg: '#111', warm: '#a74', cool: '#487' };
     view.sim.playing = false;
     let redraws = 0;
-    const baseChart = view.chart.bind(view);
-    view.chart = (svg, kind, window) => {
-      if (kind === 'culture') redraws++;
-      return baseChart(svg, kind, window);
-    };
+    const chart = view.$('#field-history-chart');
+    let markup;
+    Object.defineProperty(chart, 'innerHTML', {
+      get: () => markup,
+      set: value => { redraws++; markup = value; }
+    });
 
     view.updateReadings();
     assert.equal(redraws, 1);
-    const initialChart = view.$('#culture-chart').innerHTML;
-    const initialCounts = view.$('#counts').innerHTML;
+    const initialChart = view.$('#field-history-chart').innerHTML;
+    const initialCounts = view.$('#field-history-reading').textContent;
 
     view.updateReadings();
     assert.equal(redraws, 1, 'Unchanged readings must skip rebuilding the population chart');
@@ -241,8 +291,8 @@ test('population chart caches unchanged readings and redraws on paused intervent
     view.$('#starter').onclick();
     assert.equal(view.sim.day, 0);
     assert.equal(redraws, 2, 'Adding starter while paused must redraw the population chart');
-    assert.notEqual(view.$('#counts').innerHTML, initialCounts);
-    assert.notEqual(view.$('#culture-chart').innerHTML, initialChart);
+    assert.notEqual(view.$('#field-history-reading').textContent, initialCounts);
+    assert.notEqual(view.$('#field-history-chart').innerHTML, initialChart);
 
     view.updateReadings();
     assert.equal(redraws, 2);
@@ -251,14 +301,14 @@ test('population chart caches unchanged readings and redraws on paused intervent
     view.updateReadings();
     assert.equal(view.sim.history.length, 240);
     assert.equal(redraws, 3);
-    const fullHistoryChart = view.$('#culture-chart').innerHTML;
+    const fullHistoryChart = view.$('#field-history-chart').innerHTML;
 
     for (let i = 0; i < 25; i++) view.sim.addAgent('bacteria', .5, .1);
     view.sim.record();
     assert.equal(view.sim.history.length, 240, 'History remains at its bounded length limit');
     view.updateReadings();
     assert.equal(redraws, 4, 'Appending a sample at the history length limit must redraw the chart');
-    assert.notEqual(view.$('#culture-chart').innerHTML, fullHistoryChart);
+    assert.notEqual(view.$('#field-history-chart').innerHTML, fullHistoryChart);
   } finally {
     globalThis.matchMedia = previousMedia;
   }
@@ -305,8 +355,8 @@ test('room input refreshes the temperature legend immediately while paused', () 
     view.isDark = () => false;
     view.sim.playing = false;
     view.selectField('temperature');
-    assert.equal(view.$('#field-low').textContent, '22.0°C');
-    assert.equal(view.$('#field-high').textContent, '26.0°C');
+    assert.equal(view.$('#field-low').textContent, '23.9°C');
+    assert.equal(view.$('#field-high').textContent, '24.1°C');
 
     view.$('#room').oninput({ target: { value: '35' } });
 

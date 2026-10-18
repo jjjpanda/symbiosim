@@ -8,7 +8,8 @@ const reflect = value => {
 export function advanceParticles(view, dt) {
   const phone = view.sim.nx < 20;
   const count = view.overlay === 'organisms' ? 0 : view.overlay === 'liquid' ? (phone ? 60 : 180)
-    : view.overlay === 'flow' || view.overlay === 'temperature' ? (phone ? 500 : 1400) : phone ? 1600 : 4800;
+    : view.overlay === 'flow' ? (phone ? 300 : 700)
+    : phone ? 240 : 600;
   if (!view.particles || view.particles.length !== count * 3) {
     view.particles = new Float32Array(count * 3);
     view.particlePrevious = new Float32Array(count * 3);

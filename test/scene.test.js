@@ -15,6 +15,8 @@ import { sampleSurface } from '../src/sim/spatial.js';
 import { LIQUID_RADIUS } from '../src/sim/constants.js';
 import { SPECIES_COLORS, FLOW_COLOR, temperatureRange } from '../src/render/palette.js';
 import { CHEMICAL_COLORS } from '../src/metabolism.js';
+import { scalarColor } from '../src/render/palette.js';
+import { fieldAmount, fieldView, fieldRange, fieldFraction } from '../src/fields.js';
 const near = (a, b, tolerance = 1e-6) => assert.ok(Math.abs(a - b) < tolerance, `${a} differs from ${b}`);
 function mockCanvas() {
   let handle = 0;
@@ -373,7 +375,13 @@ test('default culture view suppresses reaction confetti and chemical views use o
   assert.ok(colors().every(color=>[...Object.values(SPECIES_COLORS),FLOW_COLOR].some(allowed=>same(color,allowed))));
   for(const [overlay,chemical] of [['sugar','sugar'],['oxygen','oxygen'],['ethanol','ethanol'],['acidity','acid'],['co2','co2']]) {
     view.overlay=overlay;scene.render(view);
-    assert.ok(colors().every(color=>[...Object.values(SPECIES_COLORS),CHEMICAL_COLORS[chemical]].some(allowed=>same(color,allowed))));
+    const cells=Array.from({length:scene.count},(_,i)=>i*9).filter(at=>scene.points[at+8]<=0);
+    assert.equal(cells.length,sim.agents.length,'Every chemical field retains the actual living cells');
+    assert.ok(cells.every(at=>scene.points[at+6]<.25),'Living context stays quieter than quantitative samples');
+    const field=fieldView(overlay);
+    const range=fieldRange(sim,overlay);
+    const allowed=Array.from({length:sim.n},(_,i)=>scalarColor(CHEMICAL_COLORS[chemical],fieldFraction(fieldAmount(sim,overlay,i),range)));
+    assert.ok(colors().every(color=>[...Object.values(SPECIES_COLORS),...allowed].some(candidate=>same(color,candidate))));
   }
   scene.dispose();
 });
@@ -402,40 +410,51 @@ test('circulation paths exist on a paused first frame, follow the solver, and va
   scene.dispose();
 });
 
-test('chemical clouds scale with local concentration and disappear when the selected substance is absent', () => {
+test('scalar probes use the legend curve without size, opacity or cloud amplification and disappear when absent', () => {
   const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation();
   sim.gas.bubbles = []; sim.gas.bursts = []; sim.gas.pockets.fill(0);
   const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, camera: {}, ratio: 1, motion: false, overlay: 'ethanol', isDark: () => true };
-  const clouds = () => Array.from({ length: scene.count }, (_, i) => i * 9).filter(at => scene.points[at + 8] === 2);
+  const probes = () => Array.from({ length: scene.count }, (_, i) => i * 9).filter(at => scene.points[at + 8] === 4);
   sim.fields.ethanol.fill(0); scene.render(view);
-  assert.equal(clouds().length, 0);
-  sim.fields.ethanol.fill(2); scene.render(view);
-  const low = clouds();
+  assert.equal(probes().length, 0);
+  assert.equal(scene.count, sim.agents.length, 'Cells remain visible even when the selected field is absent');
+  sim.fields.ethanol = sim.fields.ethanol.map((_,i)=>i % sim.nx < sim.nx / 2 ? 2 : 6);
+  const before=sim.snapshot();
+  scene.render(view);
+  const low = probes();
   assert.ok(low.length > 50);
-  const opacity = scene.points[low[0] + 6];
-  sim.fields.ethanol.fill(6); scene.render(view);
-  const high = clouds();
-  assert.ok(high.length > 50);
-  assert.ok(scene.points[high[0] + 6] > opacity * 2.9, 'Cloud opacity must reflect the concentration increase');
+  const opacity = scene.points[low[0] + 6], size = scene.points[low[0] + 7];
+  const colors = () => probes().map(at=>Array.from(scene.points.subarray(at+3,at+6)));
+  const originalColors = colors();
+  assert.ok(originalColors.some(color=>color.every((value,i)=>Math.abs(value-scalarColor(CHEMICAL_COLORS.ethanol,0)[i])<1e-6)));
+  assert.ok(originalColors.some(color=>color.every((value,i)=>Math.abs(value-scalarColor(CHEMICAL_COLORS.ethanol,1)[i])<1e-6)));
+  assert.deepEqual(sim.snapshot(),before,'Adaptive scales must only observe the model');
+  sim.fields.ethanol = sim.fields.ethanol.map(value=>value+100); scene.render(view);
+  const high = probes();
+  assert.deepEqual(colors(),originalColors,'The same spatial deviation keeps its colors when the baseline concentration changes');
+  assert.equal(scene.points[high[0] + 6], opacity);
+  assert.equal(scene.points[high[0] + 7], size);
+  assert.equal(high.length+sim.agents.length,scene.count,'Chemical fields retain measured samples and living context');
   assert.ok(scene.points.subarray(0, scene.count * 9).every(Number.isFinite));
   scene.dispose();
 });
 
-test('temperature clouds sample the full volume without column aliasing and share the water and legend scale', () => {
+test('temperature probes sample the full volume without clouds or column aliasing and share the water and legend scale', () => {
   const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation();
   sim.agents = []; sim.gas.bubbles = []; sim.gas.bursts = []; sim.gas.pockets.fill(0);
   sim.temperature = sim.temperature.map((_, i) => i % sim.nx < sim.nx / 2 ? 18 : 30);
   const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, camera: {}, ratio: 1, motion: true, overlay: 'temperature', isDark: () => true };
   const before = sim.snapshot();
   scene.render(view);
-  const clouds = Array.from({length:scene.count},(_,i)=>i*9).filter(at=>scene.points[at+8]===2);
-  assert.ok(clouds.length > 300, 'Clouds must cover the volume rather than a handful of grid columns');
+  const clouds = Array.from({length:scene.count},(_,i)=>i*9);
+  assert.ok(clouds.length > 300, 'Probes must cover the volume rather than a handful of grid columns');
+  assert.ok(clouds.every(at=>scene.points[at+8]!==2 && scene.points[at+7]<=4), 'Temperature uses small sample points, without clouds');
   for(const axis of [0,1,2]) {
     const positions=clouds.map(at=>scene.points[at+axis]);
     assert.ok(Math.max(...positions)-Math.min(...positions)>.5, 'Thermal samples span every spatial axis');
   }
-  assert.ok(clouds.some(at=>scene.points[at+3]<.2), 'Cool samples retain blue hues');
-  assert.ok(clouds.some(at=>scene.points[at+3]>.9), 'Warm samples retain orange hues');
+  assert.ok(clouds.some(at=>scene.points[at+5]>scene.points[at+3]+.1), 'Cool samples retain blue hues');
+  assert.ok(clouds.some(at=>scene.points[at+3]>scene.points[at+4]+.2 && scene.points[at+4]>scene.points[at+5]), 'Warm samples retain copper hues');
   assert.equal(scene.trails.count,0,'Temperature alone must not be represented by velocity streaks');
   assert.deepEqual(temperatureRange(sim), {low:18, high:30, centre:24, extent:6});
   const revision=scene.waterRevision;

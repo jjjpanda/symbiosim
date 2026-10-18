@@ -1,5 +1,6 @@
 import { phFromAcids } from '../sim/chemistry.js';
 import { reactionPackets } from '../metabolism.js';
+import { activityTurnover } from './activity.js';
 import { liquidPosition } from './space.js';
 import { SPECIES_COLORS, cssColor } from './palette.js';
 
@@ -176,7 +177,7 @@ export function renderVoxel(canvas, sim, voxel, dark=true, motion=true) {
     drawCell(ctx,other.agent,other.screen[0],other.screen[1],other.agent.type==='yeast'?3.4:2.7,false,dark);
   }
   ctx.globalAlpha=1;
-  const r=Math.min(11,height*.052),packets=reactionPackets(agent,motion);
+  const r=Math.min(11,height*.052),packets=reactionPackets(agent,motion,activityTurnover(voxel,agent,sim));
   drawReactions(ctx,packets,cx,cy,width,r,dark);
   ctx.strokeStyle=cssColor(SPECIES_COLORS[agent.type]); ctx.globalAlpha=.65; ctx.lineWidth=1;
   ctx.setLineDash([2,4]); ctx.beginPath(); ctx.arc(cx,cy,r+8,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);

@@ -110,11 +110,11 @@ layout(location=1) in vec4 aColor;
 layout(location=2) in float aSize;
 layout(location=3) in float aKind;
 ${transform}
-uniform float uRatio;
+uniform float uRatio; uniform float uZoom;
 out vec4 vColor; out float vKind;
 void main() {
   gl_Position=uCamera*vec4(orient(aPosition),1.);
-  gl_PointSize=clamp(aSize*uRatio*3.8/gl_Position.w,1.8*uRatio,(aKind>1.5?46.:25.)*uRatio);
+  gl_PointSize=clamp(aSize*uRatio*3.8/gl_Position.w,1.8*uRatio,(aKind>1.5?46.:25.)*uRatio)*uZoom;
   vColor=aColor; vKind=aKind;
 }`;
 export const particleFragment = `#version 300 es
@@ -125,6 +125,10 @@ void main() {
   if(vKind<-.5) { float a=-vKind*6.283185; p=mat2(cos(a),-sin(a),sin(a),cos(a))*p; p.x*=2.35; }
   float r=length(p); if(r>1. || vColor.a<.01) discard;
   float rim=1.-smoothstep(.35,.82,r);
+  // Scalar probes are unlit: the numeric color ramp is their only intensity.
+  if(vKind>3.5) {
+    color=vec4(vColor.rgb,vColor.a*(1.-smoothstep(.68,1.,r))); return;
+  }
   if(vKind>2.5) {
     float ring=smoothstep(.70,.79,r)*(1.-smoothstep(.88,.98,r));
     color=vec4(vColor.rgb,vColor.a*ring); return;

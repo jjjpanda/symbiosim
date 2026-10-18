@@ -23,7 +23,8 @@ export const HISTORY_CHARTS = [
   { kind: 'oxygen', title: 'Dissolved O₂', unit: 'model conc.', note: 'Liquid average; illustrative gas scale' },
   { kind: 'co2', title: 'Dissolved CO₂', unit: 'model conc.', note: 'Liquid average; excludes bubbles and headspace' },
   { kind: 'acid', title: 'Acetic + gluconic acid', unit: 'g/L', note: 'Combined liquid concentration' },
-  { kind: 'ethanol', title: 'Ethanol', unit: 'g/L', note: 'Dissolved ethanol' }
+  { kind: 'ethanol', title: 'Ethanol', unit: 'g/L', note: 'Dissolved ethanol' },
+  { kind: 'flow', title: 'Circulation', unit: 'model speed', note: 'Mean solver velocity magnitude' }
 ];
 
 export function historyWindow(history) {
@@ -45,7 +46,7 @@ export function chartSeries(history, kind, window = historyWindow(history)) {
   if (kind === 'chemistry') return [['sugar', 0, sugarMax, 'warm'], ['ph', phMin, phMax, 'cool']];
   if (kind === 'ph') return [['ph', phMin, phMax, 'cool']];
   if (kind === 'sugar') return [['sugar', 0, sugarMax, 'warm']];
-  const peak = Math.max(kind === 'oxygen' ? .5 : kind === 'co2' ? .1 : 1, ...values(kind));
+  const peak = Math.max(kind === 'oxygen' ? .5 : kind === 'co2' || kind === 'flow' ? .1 : 1, ...values(kind));
   const step = 10 ** Math.floor(Math.log10(peak)) / 5;
   return [[kind, 0, Math.ceil(peak / step) * step, kind === 'co2' ? 'gas' : kind === 'oxygen' ? 'cool' : 'warm']];
 }
@@ -64,12 +65,13 @@ export function drawChart(svg, history, kind, palette, window = historyWindow(hi
   const w = width - left - right, h = height - top - bottom;
   const series = chartSeries(history, kind, window);
   const marks = series.map(([key, min, max, color]) => {
+    const stroke = palette[key] || palette[color] || palette.cool;
     const segments = [[]];
     for (const point of points) {
       if (!Number.isFinite(point[key])) { if (segments.at(-1).length) segments.push([]); continue; }
       segments.at(-1).push(`${(left + (point.day - start) / span * w).toFixed(2)},${(top + h - clamp((point[key] - min) / (max - min), 0, 1) * h).toFixed(2)}`);
     }
-    return segments.map(segment => `<polyline ${key === 'bacteria' ? 'stroke-dasharray="5 3"' : ''} stroke="${palette[color] || palette.cool}" points="${segment.join(' ')}"/>${segment.length === 1 ? `<circle cx="${segment[0].split(',')[0]}" cy="${segment[0].split(',')[1]}" r="2.5" fill="${palette[color] || palette.cool}"/>` : ''}`).join('');
+    return segments.map(segment => `<polyline ${key === 'bacteria' ? 'stroke-dasharray="5 3"' : ''} stroke="${stroke}" points="${segment.join(' ')}"/>${segment.length === 1 ? `<circle cx="${segment[0].split(',')[0]}" cy="${segment[0].split(',')[1]}" r="2.5" fill="${stroke}"/>` : ''}`).join('');
   }).join('');
   const [, min, max] = series[0];
   const grid = axes ? [0, .5, 1].map(t => {
