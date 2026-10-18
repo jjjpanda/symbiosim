@@ -28,7 +28,7 @@ export function createScene(canvas) {
     disposeResources(gl, resources);
     throw error;
   }
-  const uniforms = program => Object.fromEntries(['Camera', 'Tilt', 'TiltDirection', 'Eye', 'Background', 'Viewport', 'Backdrop', 'Water', 'Refract', 'Ratio', 'Zoom'].map(key => [key, gl.getUniformLocation(program, 'u' + key)]));
+  const uniforms = program => Object.fromEntries(['Camera', 'Tilt', 'TiltDirection', 'Eye', 'Background', 'Viewport', 'Backdrop', 'Water', 'Refract', 'Transparent', 'Ratio', 'Zoom'].map(key => [key, gl.getUniformLocation(program, 'u' + key)]));
   const meshUniforms = uniforms(meshProgram), pointUniforms = uniforms(pointProgram);
   const gpu = new Map();
   const meshBuffer = mesh => {
@@ -405,6 +405,7 @@ export function createScene(canvas) {
     gl.uniform2f(meshUniforms.Viewport, pixelWidth, pixelHeight);
     gl.uniform1i(meshUniforms.Backdrop, 0);
     gl.uniform1f(meshUniforms.Refract, 0);
+    gl.uniform1f(meshUniforms.Transparent, view.transparent || view.hasAttribute?.('transparent') ? 1 : 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, blank);
     gl.depthMask(true);

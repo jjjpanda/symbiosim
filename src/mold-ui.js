@@ -10,7 +10,7 @@ export function updateMold(view) {
   sim.playing = false;
   stopSwirl(view);
   view.pending = 0;
-  if (view.moldNoticeSim === sim) return;
+  if (view.moldNoticeSim === sim || view.hasAttribute?.('embed')) return;
   // Replace any other modal so the restart action receives keyboard focus.
   for (const id of ['#panel', '#detail']) if (view.$(id).open) view.$(id).close();
   view.$('#mold-dialog').showModal();

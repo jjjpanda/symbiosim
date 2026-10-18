@@ -23,7 +23,7 @@ const fmt = (v, digits = 1) => Number(v).toFixed(digits);
 const seed = () => crypto.getRandomValues(new Uint32Array(1))[0];
 
 export class SymbiosimVessel extends HTMLElement {
-  static observedAttributes = ['theme'];
+  static observedAttributes = ['width', 'height', 'preset', 'theme', 'field', 'speed', 'room', 'swing', 'permeability', 'autoplay', 'embed', 'transparent'];
 
   constructor() {
     super();
@@ -51,6 +51,10 @@ export class SymbiosimVessel extends HTMLElement {
     this.motion = !this.reducedMotion.matches;
     if (!this.hasAttribute('tabindex')) this.tabIndex = 0;
     if (this.hasAttribute('autofocus')) this.focus();
+    if (!this.initializedAttributes) {
+      this.initializedAttributes = true;
+      this.applyAttributes?.();
+    }
     this.readPalette(); this.updateControls();
     this.resizeObserver = new ResizeObserver(() => this.resize()); this.resizeObserver.observe(this.canvas);
     this.dark.addEventListener('change', this.paletteHandler = () => { this.readPalette(); this.updateControls(); });
@@ -72,11 +76,49 @@ export class SymbiosimVessel extends HTMLElement {
     this.sceneRenderer?.dispose(); this.sceneRenderer = undefined;
   }
 
-  attributeChangedCallback() { this.readPalette(); this.updateControls(); }
-  isDark() { return this.getAttribute('theme') === 'dark' || (!this.hasAttribute('theme') && this.dark.matches); }
+  attributeChangedCallback(name) {
+    this.applyAttribute(name);
+    this.readPalette(); this.updateControls();
+  }
+
+  applyAttributes(names = SymbiosimVessel.observedAttributes) {
+    for (const name of names) {
+      if (this.hasAttribute?.(name)) this.applyAttribute(name);
+    }
+  }
+
+  applyAttribute(name) {
+    if (!this.sim) return;
+    const val = this.getAttribute?.(name);
+    const num = Number(val);
+    if (name === 'width' || name === 'height') {
+      const px = val !== null && Number.isFinite(num) && num > 0 ? `${Math.round(num)}px` : '';
+      this.style?.setProperty?.(name, px ? `min(100%, ${px})` : '');
+      if (this.ctx) this.resize();
+    } else if (name === 'preset' && REGIMES[val] && !this.sim.mold.failed) {
+      this.sim.applyPreset(val);
+      this.activePreset = val;
+    } else if (name === 'field' && OVERLAYS.includes(val)) {
+      this.overlay = val;
+    } else if (name === 'speed' && val !== null && Number.isFinite(num)) {
+      this.sim.speed = Math.max(1, Math.min(60, num));
+    } else if ((name === 'room' || name === 'swing') && val !== null && Number.isFinite(num)) {
+      this.activePreset = null;
+      this.sim.applySettings({ [name]: num });
+    } else if (name === 'permeability' && val !== null && Number.isFinite(num)) {
+      this.activePreset = null;
+      this.sim.applySettings({ permeability: num / 100, cover: 'open' });
+    } else if (name === 'autoplay') {
+      this.sim.playing = val !== 'false';
+    } else if (name === 'embed' && this.ctx) {
+      this.resize();
+    }
+  }
+
+  isDark() { return this.getAttribute?.('theme') === 'dark' || (!this.hasAttribute?.('theme') && this.dark.matches); }
   readPalette() {
-    const style = getComputedStyle(this);
-    this.palette = Object.fromEntries(['fg', 'warm', 'cool', 'gas'].map(key => [key, style.getPropertyValue('--' + key).trim()]));
+    const style = globalThis.getComputedStyle?.(this);
+    this.palette = style ? Object.fromEntries(['fg', 'warm', 'cool', 'gas'].map(key => [key, style.getPropertyValue('--' + key).trim()])) : (this.palette || {});
     for (const [chemical, color] of Object.entries(CHEMICAL_COLORS)) this.palette[chemical] = cssColor(color);
     this.palette.mold = cssColor(MOLD_COLOR);
     this.updateReadings(); this.draw();
@@ -257,7 +299,7 @@ export class SymbiosimVessel extends HTMLElement {
       this.restartVessel();
     }
     else if (key === 't') this.setAttribute('theme', this.isDark() ? 'light' : 'dark');
-    else if (key === 'c' || key === 'e') { stopSwirl(this); this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
+    else if ((key === 'c' || key === 'e') && !this.hasAttribute?.('embed')) { stopSwirl(this); this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
     else if (key === 'f') { this.sim.speed = SPEEDS.find(speed => speed > this.sim.speed) || SPEEDS[0]; this.updateControls(); }
     else if (key === 'v') this.selectField(OVERLAYS[(OVERLAYS.indexOf(this.overlay) + 1) % OVERLAYS.length]);
     else return false;
@@ -270,6 +312,7 @@ export class SymbiosimVessel extends HTMLElement {
     this.sim = new Simulation({ seed: seed(), width: this.sim.nx, height: this.sim.ny, depth: this.sim.nz });
     this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
     this.pending = 0; this.lastFrame = 0; this.particles = null; this.activePreset = null; this.moldNoticeSim = null;
+    this.applyAttributes?.(['preset', 'speed', 'room', 'swing', 'permeability', 'autoplay']);
     this.updateControls();
     this.announce('Started a fresh vessel.');
   }
@@ -354,13 +397,13 @@ export class SymbiosimVessel extends HTMLElement {
   updateFieldHistory() { updateFieldHistory(this); }
   updateDetail() { updateHistoryDialog(this); }
   resize() {
-    const ratio = this.ratio = Math.min(devicePixelRatio || 1, 2);
+    const ratio = this.ratio = Math.min(globalThis.devicePixelRatio || 1, 2);
     if (this.canvas.clientWidth > 0 && this.canvas.clientHeight > 0) {
       this.canvas.width = Math.max(1, Math.round(this.canvas.clientWidth * ratio));
       this.canvas.height = Math.max(1, Math.round(this.canvas.clientHeight * ratio));
     }
     if (this.camera) this.updateCamera();
-    this.ctx.setTransform(ratio, 0, 0, ratio, 0, 0); this.draw();
+    this.ctx?.setTransform?.(ratio, 0, 0, ratio, 0, 0); this.draw();
   }
   advance(days, motionDays = days) {
     this.sim.step(days, motionDays);
@@ -391,7 +434,7 @@ export class SymbiosimVessel extends HTMLElement {
   }
 
   drawVoxel() {
-    if (!this.voxelCanvases || (this.viewMode === 'jar' && (this.clientWidth || 1200) > 1100)) return;
+    if (!this.voxelCanvases || this.hasAttribute?.('embed') || (this.viewMode === 'jar' && (this.clientWidth || 1200) > 1100)) return;
     for (const [type, canvas] of Object.entries(this.voxelCanvases)) {
       const info = renderVoxel(canvas, this.sim, this.voxels[type], this.isDark(), this.motion);
       if (!info) continue;

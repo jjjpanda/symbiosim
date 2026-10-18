@@ -33,7 +33,7 @@ in float vImmersion;
 flat in int vMaterial;
 uniform vec3 uEye; uniform vec3 uBackground;
 uniform sampler2D uBackdrop; uniform vec2 uViewport;
-uniform float uWater; uniform float uRefract;
+uniform float uWater; uniform float uRefract; uniform float uTransparent;
 out vec4 color;
 float noise(vec2 p) {
   vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
@@ -62,7 +62,7 @@ void main() {
     float fresnel=.035+.965*pow(1.-facing,5.);
     float bend=vMaterial==1?.0035:vMaterial==2?.0028:.0055;
     vec4 back=texture(uBackdrop,clamp(gl_FragCoord.xy/uViewport+n.xy*bend,vec2(.001),vec2(.999)));
-    vec3 behind=back.rgb+uBackground*(1.-back.a);
+    vec3 behind=back.rgb+uBackground*(1.-back.a)*(1.-uTransparent);
     // Absorb light through tea using Beer-Lambert extinction derived from the
     // pH-dependent (or thermal-overlay) liquid color while preserving cell contrast.
     if(vMaterial==2) {
@@ -75,7 +75,7 @@ void main() {
     }
     // Alpha blending applies opacity once more. Normalize the reflected and
     // refracted contributions here so it does not dim Fresnel a second time.
-    float transmission=(1.-fresnel)*alpha;
+    float transmission=(1.-fresnel)*mix(alpha,clamp(back.a+alpha,0.,1.),uTransparent);
     float opacity=fresnel+transmission;
     vec3 light=(behind*transmission+reflected*fresnel)/max(.001,opacity);
     if(uRefract<.5) light=mix(base,reflected,.35+fresnel*.4);

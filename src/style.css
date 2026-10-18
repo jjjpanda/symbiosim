@@ -45,7 +45,7 @@
     background: var(--bg);
   }
 }
-:host([transparent]) { background: transparent; }
+:host([transparent]), :host([theme][transparent]) { background: transparent; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 button, input, select { font: inherit; }
@@ -82,6 +82,31 @@ button svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentC
   overflow: hidden;
   margin: auto;
   padding: 14px 24px 16px;
+}
+:host([embed]) .masthead,
+:host([embed]) .left-rail,
+:host([embed]) .instruments,
+:host([embed]) .hud,
+:host([embed]) .mobile-readings,
+:host([embed]) .vessel-tools,
+:host([embed]) .field-footer { display: none !important; }
+:host([embed]) { height: 100%; }
+:host([embed]) .layout {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: 'field';
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+  padding: 0;
+  gap: 0;
+}
+:host([embed]) .field {
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  max-height: none;
 }
 @container (min-width: 1101px) {
   .layout[data-view='jar'] .cell-samples { display: none; }

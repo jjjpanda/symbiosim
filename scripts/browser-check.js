@@ -219,8 +219,26 @@ try {
       v.$('#auto-skim').dispatchEvent(new Event('change'));
       return v.sim.care.autoSkim === false && Number.isFinite(v.sim.headspace.oxygen) && Number.isFinite(v.sim.meanTemperature());
     })()`),true);
+    const embedFit = await evaluate(`(() => {
+      const box = document.createElement('div');
+      box.style.cssText = 'width: 260px; height: 220px; overflow: hidden;';
+      document.body.appendChild(box);
+      const v = document.querySelector('symbiosim-vessel');
+      box.appendChild(v);
+      v.setAttribute('embed', '');
+      v.setAttribute('transparent', '');
+      v.setAttribute('width', '420');
+      v.setAttribute('height', '520');
+      const hostRect = v.getBoundingClientRect(), layoutRect = v.$('.layout').getBoundingClientRect(), canvasRect = v.canvas.getBoundingClientRect();
+      const hiddenUi = ['.masthead', '.left-rail', '.instruments', '.hud', '.vessel-tools', '.field-footer'].every(sel => v.$(sel).getClientRects().length === 0);
+      const bg = getComputedStyle(v).backgroundColor;
+      v.removeAttribute('embed'); v.removeAttribute('transparent'); v.removeAttribute('width'); v.removeAttribute('height');
+      document.body.appendChild(v); box.remove();
+      return { hostW: Math.round(hostRect.width), hostH: Math.round(hostRect.height), layoutH: Math.round(layoutRect.height), canvasH: Math.round(canvasRect.height), hiddenUi, bg };
+    })()`);
+    assert.deepEqual(embedFit, { hostW: 260, hostH: 220, layoutH: 220, canvasH: 220, hiddenUi: true, bg: 'rgba(0, 0, 0, 0)' });
     assert.deepEqual(errors,[]);
-    console.log('PASS: responsive layout at seven widths (including voxel-mode resize), readable stats, touch targets, presets, no zoom overlay and auto-skim control. GPU rendering was disabled.');
+    console.log('PASS: responsive layout at seven widths (including voxel-mode resize and embed container fit), readable stats, touch targets, presets, no zoom overlay and auto-skim control. GPU rendering was disabled.');
   } else {
   const fresh=await inspect();
   assert.equal(fresh.error,undefined);assert.equal(fresh.backend,'webgl2');assert.ok(fresh.particles>=fresh.organisms&&fresh.film>1000);
@@ -270,6 +288,27 @@ try {
   assert.equal(await evaluate(`(() => {
     const v=document.querySelector('symbiosim-vessel');v.canvas.click();return Boolean(v.$('.lens'));
   })()`),false,'Clicking must not open a zoom overlay');
+  const embedCheck = await evaluate(`(() => {
+    const box = document.createElement('div');
+    box.style.cssText = 'width: 260px; height: 220px; overflow: hidden;';
+    document.body.appendChild(box);
+    const v = document.querySelector('symbiosim-vessel');
+    box.appendChild(v);
+    v.setAttribute('embed', '');
+    v.setAttribute('transparent', '');
+    v.setAttribute('width', '420');
+    v.setAttribute('height', '520');
+    v.draw();
+    const s = v.sceneRenderer, g = s.gl, pixels = new Uint8Array(4);
+    g.readPixels(0, 0, 1, 1, g.RGBA, g.UNSIGNED_BYTE, pixels);
+    const hostRect = v.getBoundingClientRect(), layoutRect = v.$('.layout').getBoundingClientRect(), canvasRect = v.canvas.getBoundingClientRect();
+    const hiddenUi = ['.masthead', '.left-rail', '.instruments', '.hud', '.vessel-tools', '.field-footer'].every(sel => v.$(sel).getClientRects().length === 0);
+    const bg = getComputedStyle(v).backgroundColor;
+    v.removeAttribute('embed'); v.removeAttribute('transparent'); v.removeAttribute('width'); v.removeAttribute('height');
+    document.body.appendChild(v); box.remove(); v.draw();
+    return { hostW: Math.round(hostRect.width), hostH: Math.round(hostRect.height), layoutH: Math.round(layoutRect.height), canvasH: Math.round(canvasRect.height), hiddenUi, bg, cornerAlpha: pixels[3], gl: g.getError() };
+  })()`);
+  assert.deepEqual(embedCheck, { hostW: 260, hostH: 220, layoutH: 220, canvasH: 220, hiddenUi: true, bg: 'rgba(0, 0, 0, 0)', cornerAlpha: 0, gl: 0 });
   for(const width of[320,390,640,768,1024]){
     await metrics(width,844);await pause(100);const p=await inspect();assert.equal(p.width,p.scroll);assert.equal(p.gl,0);assert.equal((await checkTrackingLayout()).overlap,false);
   }

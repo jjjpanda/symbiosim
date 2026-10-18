@@ -552,3 +552,75 @@ test('active pour transfer reserves vessel capacity against starter additions an
   assert.ok(sugarAxis[2] >= 140 && sugarAxis[2] >= simHigh.sugar(), 'Sugar chart upper bound adapts above 120 g/L');
 });
 
+test('embed and configuration attributes update simulation settings, sizing, and suppress voxel/modal UI, preserving live edits across reconnection and reapplying on restart', () => {
+  const previousMedia = globalThis.matchMedia;
+  const previousObserver = globalThis.ResizeObserver;
+  const previousCancel = globalThis.cancelAnimationFrame;
+  const previousDocument = globalThis.document;
+  globalThis.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+  globalThis.cancelAnimationFrame = () => {};
+  globalThis.document = { hidden: false, addEventListener() {}, removeEventListener() {} };
+  try {
+    const attrs = new Map([['embed', ''], ['transparent', ''], ['width', '420'], ['height', '520'], ['preset', 'tangy'], ['field', 'oxygen'], ['speed', '30'], ['autoplay', 'false']]);
+    const styles = new Map();
+    const view = new SymbiosimVessel();
+    view.hasAttribute = name => attrs.has(name);
+    view.getAttribute = name => attrs.has(name) ? attrs.get(name) : null;
+    view.style = { setProperty: (k, v) => styles.set(k, v) };
+    view.draw = () => {};
+    view.isDark = () => true;
+    view.connectedCallback();
+    assert.equal(styles.get('width'), 'min(100%, 420px)');
+    assert.equal(styles.get('height'), 'min(100%, 520px)');
+    assert.equal(view.activePreset, 'tangy');
+    assert.equal(view.sim.settings.room, REGIMES.tangy.room);
+    assert.equal(view.overlay, 'oxygen');
+    assert.equal(view.sim.speed, 30);
+    assert.equal(view.sim.playing, false);
+
+    // Live interactive changes must survive DOM disconnection/reconnection.
+    view.sim.applySettings({ room: 29 });
+    view.sim.speed = 45;
+    view.sim.playing = true;
+    view.disconnectedCallback();
+    view.connectedCallback();
+    assert.equal(view.sim.settings.room, 29, 'Reconnecting must not overwrite live room temperature');
+    assert.equal(view.sim.speed, 45, 'Reconnecting must not overwrite live speed');
+    assert.equal(view.sim.playing, true, 'Reconnecting must not overwrite live playback state');
+
+    attrs.set('room', '21');
+    attrs.set('permeability', '60');
+    view.attributeChangedCallback('room');
+    view.attributeChangedCallback('permeability');
+    assert.equal(view.sim.settings.room, 21);
+    assert.equal(view.sim.settings.permeability, .6);
+    assert.equal(view.activePreset, null);
+
+    // Restarting must reapply declared simulation attributes onto the fresh simulation.
+    view.sim.applySettings({ room: 32 });
+    view.sim.speed = 12;
+    view.sim.playing = true;
+    view.restartVessel();
+    assert.equal(view.sim.settings.room, 21, 'Restart must reapply room attribute');
+    assert.equal(view.sim.settings.permeability, .6, 'Restart must reapply permeability attribute');
+    assert.equal(view.sim.speed, 30, 'Restart must reapply speed attribute');
+    assert.equal(view.sim.playing, false, 'Restart must reapply autoplay attribute');
+
+    let modalOpened = false;
+    view.$('#panel').showModal = () => { modalOpened = true; };
+    view.$('#mold-dialog').showModal = () => { modalOpened = true; };
+    view.command('c');
+    view.sim.mold.failed = true;
+    view.updateReadings();
+    assert.equal(modalOpened, false, 'Embed mode suppresses modal dialogs');
+    view.disconnectedCallback();
+  } finally {
+    globalThis.matchMedia = previousMedia;
+    globalThis.ResizeObserver = previousObserver;
+    globalThis.cancelAnimationFrame = previousCancel;
+    globalThis.document = previousDocument;
+  }
+});
+
+
