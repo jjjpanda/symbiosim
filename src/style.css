@@ -83,9 +83,9 @@ button svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentC
   margin: auto;
   padding: 14px 24px 16px;
 }
+.embed-tabs.view-modes { display: none; }
+:host([embed]) .left-rail, :host([embed]) .instruments { display: none; }
 :host([embed]) .masthead,
-:host([embed]) .left-rail,
-:host([embed]) .instruments,
 :host([embed]) .hud,
 :host([embed]) .mobile-readings,
 :host([embed]) .vessel-tools,
@@ -365,6 +365,28 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
   nav button:last-child svg { display: none; }
   .play-button { min-width: 0; }
   .identity p { font-size: 10px; }
+}
+@container (width > 650px) {
+  :host([embed]) .layout {
+    grid-template-columns: 284px minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-areas: 'embed-tabs field' 'embed-pane field';
+    padding: 0 8px 8px;
+    gap: 6px;
+  }
+  :host([embed]) .left-rail,
+  :host([embed]) .cell-samples,
+  :host([embed]) .instruments { display: contents; }
+  :host([embed]) .left-rail > :not(.cell-samples),
+  :host([embed]) .sample-hint,
+  :host([embed]) .instruments > :not(.care-card) { display: none !important; }
+  :host([embed]) .embed-tabs { display: flex; grid-area: embed-tabs; }
+  :host([embed]) .embed-tabs button { flex: 1; min-width: 0; min-height: 36px; text-align: center; }
+  :host([embed]) .voxel-card,
+  :host([embed]) .care-card { grid-area: embed-pane; min-width: 0; min-height: 0; overflow: auto; }
+  :host([embed]) .voxel-card { grid-template-rows: auto minmax(90px, 1fr) auto; }
+  :host([embed]) .voxel-canvas { height: 100%; min-height: 0; }
+  :host([embed]) .care-card { align-content: start; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }

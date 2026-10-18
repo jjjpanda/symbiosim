@@ -27,10 +27,13 @@ export function vesselTemplate() {
       <button data-k="c" aria-label="Conditions" title="Conditions · C">${icons.conditions}<span>Conditions</span></button>
     </nav>
   </header>
+  <div class="embed-tabs view-modes glass" role="group" aria-label="Vessel detail panes">
+    ${['yeast', 'bacteria', 'actions'].map((pane, index) => `<button type="button" data-embed-pane="${pane}" aria-controls="embed-pane-${pane}" aria-pressed="${index === 0}" class="${index === 0 ? 'on' : ''}">${pane.toUpperCase()}</button>`).join('')}
+  </div>
   <aside class="left-rail" aria-label="Tracked organisms">
     <div class="cell-samples" aria-label="Live organism close-ups">
       ${[['yeast', 'Yeast', 'Sugar → ethanol + CO₂'], ['bacteria', 'Acetic acid bacterium', 'Ethanol + oxygen → acids']].map(([type, name, reaction]) => `
-      <section class="voxel-card glass-card" aria-label="${name} tracking voxel">
+      <section id="embed-pane-${type}" class="voxel-card glass-card" aria-label="${name} tracking voxel">
         <div class="voxel-header"><div><span class="section-label ${type === 'yeast' ? 'warm' : 'cool'}">${name}</span><small id="${type}-coords">Finding a cell…</small></div><span class="tracking-label">LIVE</span></div>
         <canvas id="${type}-canvas" class="voxel-canvas" tabindex="0" role="img" aria-label="Close-up following one ${name.toLowerCase()}. Drag or use arrow keys to rotate; R resets."></canvas>
         <div class="voxel-footer"><span class="reaction-caption">${reaction}</span><span id="${type}-summary"></span></div>
@@ -82,7 +85,7 @@ export function vesselTemplate() {
       </section>
       <details class="field-guide"><summary>Reading the field</summary><h3 id="field-title">Living tea</h3><p id="field-description"></p><p id="field-key"></p><p>Muted yellow ovals are yeast; blue rods are bacteria. Rings mark the cells followed in the close-ups. Cell activity shows active uptake, products and exchanges.</p></details>
     </section>
-    <section class="care-card glass-card" aria-label="Vessel actions">
+    <section id="embed-pane-actions" class="care-card glass-card" aria-label="Vessel actions">
       <div class="care-heading"><span class="section-label">Vessel actions</span></div>
       <div class="fluid-actions" aria-label="Interact with the tea">
         <button id="pour" title="Pour the configured tea recipe">Pour 15%</button>
@@ -93,9 +96,8 @@ export function vesselTemplate() {
       <button id="swirl" aria-pressed="false" class="swirl-button" title="Press and hold to build rotational momentum · W"><span>Hold to swirl tea</span><output id="swirl-speed" aria-live="off" aria-label="Estimated liquid rotational speed" title="Estimated visible rotations per minute from the liquid velocity. Paused readings are queued until Resume or Step.">0.0 rpm</output></button>
       <div class="culture-notes"><span id="care-status"></span><span id="exchange-count"></span></div>
       <section class="film-readings" aria-label="Pellicle readings"><div class="section-label">Pellicle <strong id="film-thickness" title="Mean thickness of covered patches, using the illustrative visual scale."></strong></div><progress id="film-load" max="2.4" value="0" aria-label="Mean pellicle thickness in illustrative millimeters"></progress><span id="pellicle-status"></span><span id="film-care"></span><span id="mold-status" hidden></span></section>
+      <p class="action-status" role="status" aria-live="polite"></p>
     </section>
-
-    <p class="action-status" role="status" aria-live="polite"></p>
   </aside>
 </div>
 <dialog id="mold-dialog" class="glass mold-dialog" aria-labelledby="mold-title" aria-describedby="mold-message">

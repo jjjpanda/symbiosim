@@ -31,6 +31,7 @@ export class SymbiosimVessel extends HTMLElement {
     this.sim = new Simulation({ seed: seed(), width: phone ? 16 : 22, height: phone ? 24 : 30, depth: phone ? 5 : 8 });
     this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
     this.viewMode = 'split';
+    this.embedPane = 'yeast';
     this.overlay = 'liquid';
     this.camera = defaultCamera();
     this.dark = matchMedia('(prefers-color-scheme: dark)');
@@ -111,7 +112,7 @@ export class SymbiosimVessel extends HTMLElement {
     } else if (name === 'autoplay') {
       this.sim.playing = val !== 'false';
     } else if (name === 'embed' && this.ctx) {
-      this.resize();
+      this.selectEmbedPane();
     }
   }
 
@@ -176,9 +177,23 @@ export class SymbiosimVessel extends HTMLElement {
     this.resize();
   }
 
+  selectEmbedPane(pane = this.embedPane) {
+    if (!['yeast', 'bacteria', 'actions'].includes(pane)) return;
+    stopSwirl(this);
+    this.embedPane = pane;
+    this.$$('[data-embed-pane]').forEach(button => {
+      const active = button.dataset.embedPane === pane;
+      button.classList.toggle('on', active);
+      button.setAttribute('aria-pressed', String(active));
+      this.$('#embed-pane-' + button.dataset.embedPane).hidden = this.hasAttribute('embed') && !active;
+    });
+    this.resize();
+  }
+
   bind() {
     this.$$('[data-k]').forEach(button => button.onclick = () => this.command(button.dataset.k));
     this.$$('[data-view-mode]').forEach(button => button.onclick = () => this.setViewMode(button.dataset.viewMode));
+    this.$$('[data-embed-pane]').forEach(button => button.onclick = () => this.selectEmbedPane(button.dataset.embedPane));
     for (const [type, canvas] of Object.entries(this.voxelCanvases)) {
       let drag;
       canvas.onpointerdown = e => {
@@ -434,8 +449,10 @@ export class SymbiosimVessel extends HTMLElement {
   }
 
   drawVoxel() {
-    if (!this.voxelCanvases || this.hasAttribute?.('embed') || (this.viewMode === 'jar' && (this.clientWidth || 1200) > 1100)) return;
+    const embedded = this.hasAttribute?.('embed');
+    if (!this.voxelCanvases || (!embedded && this.viewMode === 'jar' && (this.clientWidth || 1200) > 1100)) return;
     for (const [type, canvas] of Object.entries(this.voxelCanvases)) {
+      if (embedded && (type !== this.embedPane || !canvas.clientWidth)) continue;
       const info = renderVoxel(canvas, this.sim, this.voxels[type], this.isDark(), this.motion);
       if (!info) continue;
       for (const key of ['coords', 'summary']) {
