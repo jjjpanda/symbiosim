@@ -20,7 +20,7 @@ Sweet tea circulates by heat, density, and rising $\text{CO}_2$ bubbles while a 
 
 ### Hosted iframe
 
-Use the hosted `/embed/` page to keep the simulation code out of the parent site's JavaScript bundle:
+Embed the vessel with an iframe:
 
 ```html
 <iframe
@@ -33,21 +33,13 @@ Use the hosted `/embed/` page to keep the simulation code out of the parent site
 ></iframe>
 ```
 
-The iframe downloads the simulation separately when it loads. The page fills the iframe and always enables `embed` mode. `/embed` redirects to `/embed/`, preserving the query string. The static build includes `embed/index.html`, with relative asset URLs that also work under a project subpath such as `/symbiosim/`.
+The vessel fills the iframe with its panels hidden. Set the iframe's dimensions in the parent page; omit URL `width` and `height` to fill it.
 
-Query parameters use the same names as the component attributes below:
+Query parameters use the [Options](#options) names and defaults; `embed` is always enabled. Set `autoplay=false` to start paused. `transparent` and `autofocus` accept `true` or a bare parameter to enable, and `false` or omission to disable.
 
-| Parameter | Accepted values |
-| --- | --- |
-| `preset` | `balanced`, `convection`, `tangy`, `cool`, `vinegar`, `mold` |
-| `theme` | `light`, `dark`; omit for the system preference |
-| `field` | Any visualization field listed in Options |
-| `speed`, `room`, `swing`, `permeability` | Finite numbers, clamped to their ranges in Options |
-| `autoplay` | `true` or `false`; defaults to playing |
-| `transparent`, `autofocus` | `true` or a bare parameter enables the attribute; `false` or omission leaves it off |
-| `width`, `height` | Positive pixel sizes rounded to whole pixels, constrained to the iframe bounds |
+Numeric controls are clamped to the ranges below; positive `width` and `height` values are rounded to whole pixels. Unknown or invalid values are ignored; the first repeated value wins.
 
-Omit `width` and `height` in the URL to fill the iframe; set the iframe's own dimensions in the parent page. Unknown parameters and invalid values are ignored. For repeated parameters, the first value wins. Presets apply before explicit `room`, `swing`, and `permeability` overrides, regardless of query order. Options are read on page load; changing the iframe URL reloads the simulation. No cross-frame messaging is required.
+Explicit `room`, `swing`, and `permeability` override the preset regardless of query order. Changing the iframe's `src` reloads the simulation with the new settings.
 
 ### Web component
 
@@ -62,8 +54,6 @@ import 'symbiosim';
 ```html
 <symbiosim-vessel embed transparent width="420" height="520" preset="balanced" theme="dark"></symbiosim-vessel>
 ```
-
-Adding `embed` hides the masthead, organism close-up rails, instrument panels, HUD, and camera toolbar so only the interactive 3D jar is displayed. Adding `transparent` removes the component backdrop and prevents glass/tea refraction from compositing an opaque room fill behind the vessel.
 
 ## Options
 
