@@ -6,16 +6,15 @@ A 3D simulation of a kombucha vessel with circulating tea, yeast, acetic acid ba
 
 ## Culture
 
-A coarse 3D fluid solver (22 × 30 × 8 on desktop, 16 × 24 × 5 on phones) couples velocity components through a closed-volume Neumann pressure projection and conservatively transports temperature and eight chemical fields (`sucrose`, `glucose`, `fructose`, `ethanol`, `oxygen`, `acetic`, `gluconic`, `co2`). Heat, sugar density, inlet momentum, outlet forcing, rising bubbles, and free-surface waves drive circulation.
+Sweet tea circulates by heat, density, and rising $\text{CO}_2$ bubbles while a **SCOBY** (**s**ymbiotic **c**ulture **o**f **b**acteria and **y**east) ferments sugars into acids and builds a floating cellulose **pellicle**.
 
-| Role / Material | Behavior |
+| Component | Behavior |
 | --- | --- |
-| Yeast | Ferments sugars into ethanol and $\text{CO}_2$; inhibited and killed by excess ethanol above ~4–6% ABV. |
-| Acetic acid bacteria | Oxidize ethanol and glucose into acetic and gluconic acids using a shared $\text{O}_2$ budget; tolerate ~8–12% ABV. |
-| Pellicle (mother) | Glucose-funded cellulose sheet with wet-load buoyancy, elastic deformation, 2D translation/rotation, and gas trapping under `FILM_CUTOFF`. |
-| Surface mold | Rare *Aspergillus* / *Penicillium* particulate (`ppm`) on exposed film under warm, low-acid aerobic conditions; latches failure above `100 ppm`. |
-
-Automatic care checks every half day: by default it harvests 65% below pH 3.52 or 40 g/L sugar, refills to 72% capacity, and skims 80% of the pellicle above 2.1 mm mean thickness. Displayed pour/drain jets compress 0.12-day conservative exchanges into ~1–3s hydraulic animations. One perspective WebGL 2 scene renders the inner/outer glass walls, steel spigot, refracting tea, contoured pellicle, and point sprites with shared offscreen depth.
+| SCOBY | The **s**ymbiotic **c**ulture **o**f **b**acteria and **y**east living throughout the liquid and film. |
+| Yeast | Ferments sugars into ethanol and $\text{CO}_2$. |
+| Acetic acid bacteria | Consumes oxygen to convert ethanol and glucose into organic acids. |
+| Pellicle | Floating cellulose mat formed at the surface by bacterial byproducts; traps gas and thickens over time. |
+| Surface mold | Rare aerobic spoiler on warm, low-acid surfaces. |
 
 ## Embed
 

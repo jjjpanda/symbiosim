@@ -5,7 +5,7 @@ import { MOLD_PPM } from './sim/mold.js';
 
 // One source for the chooser, captions, and quantitative field legend.
 export const FIELD_VIEWS = [
-  { id: 'liquid', history: 'culture', name: 'Living tea', color: cssColor(SPECIES_COLORS.yeast), note: 'Yeast, bacteria, bubbles and the cellulose mother in circulating tea.', key: 'Muted yellow yeast · blue bacteria · pale bubbles', ends: ['Living culture', ''] },
+  { id: 'liquid', history: 'culture', name: 'Living tea', color: cssColor(SPECIES_COLORS.yeast), note: 'Yeast, bacteria, bubbles and the cellulose pellicle in circulating tea.', key: 'Muted yellow yeast · blue bacteria · pale bubbles', ends: ['Living culture', ''] },
   { id: 'organisms', history: 'culture', name: 'Cell activity', color: '#85b8d8', note: 'Follow uptake, products and exchanges between nearby cells. Sparse paths follow real metabolism at a readable visual pace.', key: 'Muted yellow yeast → ethanol → blue bacteria', ends: ['Active reactions', ''] },
   { id: 'flow', history: 'flow', name: 'Circulation', unit: 'model speed', color: cssColor(FLOW_COLOR), note: 'Curved paths follow the current velocity field. Colors scale from the slowest to the fastest current in the tea; still tea has no paths.', key: 'Slow current → fast current within the current range', ends: ['Slow', 'Fast'] },
   { id: 'temperature', history: 'temperature', name: 'Temperature', color: cssColor(THERMAL_COLORS[2]), note: 'Blue marks cooler tea; copper marks warmer tea. Moving sample points show local temperature as they follow the tea. Muted cells remain visible for context.', key: 'The scale centres on room temperature and follows the measured temperature deviation', ends: ['Cooler', 'Warmer'] },
