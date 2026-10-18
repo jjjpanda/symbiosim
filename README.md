@@ -18,6 +18,39 @@ Sweet tea circulates by heat, density, and rising $\text{CO}_2$ bubbles while a 
 
 ## Embed
 
+### Hosted iframe
+
+Use the hosted `/embed/` page to keep the simulation code out of the parent site's JavaScript bundle:
+
+```html
+<iframe
+  src="https://jjjpanda.github.io/symbiosim/embed/?preset=balanced&amp;theme=dark&amp;speed=12&amp;transparent=true"
+  title="Interactive fermentation simulation"
+  width="420"
+  height="520"
+  loading="lazy"
+  style="border: 0;"
+></iframe>
+```
+
+The iframe downloads the simulation separately when it loads. The page fills the iframe and always enables `embed` mode. `/embed` redirects to `/embed/`, preserving the query string. The static build includes `embed/index.html`, with relative asset URLs that also work under a project subpath such as `/symbiosim/`.
+
+Query parameters use the same names as the component attributes below:
+
+| Parameter | Accepted values |
+| --- | --- |
+| `preset` | `balanced`, `convection`, `tangy`, `cool`, `vinegar`, `mold` |
+| `theme` | `light`, `dark`; omit for the system preference |
+| `field` | Any visualization field listed in Options |
+| `speed`, `room`, `swing`, `permeability` | Finite numbers, clamped to their ranges in Options |
+| `autoplay` | `true` or `false`; defaults to playing |
+| `transparent`, `autofocus` | `true` or a bare parameter enables the attribute; `false` or omission leaves it off |
+| `width`, `height` | Positive pixel sizes rounded to whole pixels, constrained to the iframe bounds |
+
+Omit `width` and `height` in the URL to fill the iframe; set the iframe's own dimensions in the parent page. Unknown parameters and invalid values are ignored. For repeated parameters, the first value wins. Presets apply before explicit `room`, `swing`, and `permeability` overrides, regardless of query order. Options are read on page load; changing the iframe URL reloads the simulation. No cross-frame messaging is required.
+
+### Web component
+
 ```sh
 npm install ../symbiosim
 ```
@@ -76,3 +109,5 @@ npm run build
 ```
 
 `npm run benchmark` times solver steps, `npm run soak -- 30 --playback` verifies multi-week culture stability and snapshot restoration, and `npm run check:browser` runs headless Chromium WebGL and layout checks.
+
+After building, `npm run check:browser -- dist --embed` checks the hosted embed page, including its redirect, query options, transparent layout, and WebGL rendering.

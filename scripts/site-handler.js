@@ -8,8 +8,15 @@ export async function createSiteHandler(root) {
   const resources = new Set((await siteFiles(root)).map(file => '/' + file));
   return async (request, response) => {
     try {
-      const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
-      const resource = pathname === '/' ? '/index.html' : pathname;
+      const url = new URL(request.url, 'http://localhost');
+      const pathname = decodeURIComponent(url.pathname);
+      // Match static directory hosting, keeping relative imports and query options.
+      if (pathname === '/embed') {
+        response.writeHead(308, { Location: '/embed/' + url.search });
+        response.end();
+        return;
+      }
+      const resource = pathname === '/' ? '/index.html' : pathname === '/embed/' ? '/embed/index.html' : pathname;
       if (!resources.has(resource)) throw new Error('Unknown resource');
       const target = resolve(root, '.' + resource);
       if (target !== root && !target.startsWith(root + sep)) throw new Error('Outside site root');
