@@ -24,7 +24,8 @@ export const HISTORY_CHARTS = [
   { kind: 'co2', title: 'Dissolved CO₂', unit: 'model conc.', note: 'Liquid average; excludes bubbles and headspace' },
   { kind: 'acid', title: 'Acetic + gluconic acid', unit: 'g/L', note: 'Combined liquid concentration' },
   { kind: 'ethanol', title: 'Ethanol', unit: 'g/L', note: 'Dissolved ethanol' },
-  { kind: 'flow', title: 'Circulation', unit: 'model speed', note: 'Mean solver velocity magnitude' }
+  { kind: 'flow', title: 'Circulation', unit: 'model speed', note: 'Mean solver velocity magnitude' },
+  { kind: 'mold', title: 'Mold', unit: 'ppm', note: 'Surface particulate; restart above 100 ppm' }
 ];
 
 export function historyWindow(history) {
@@ -46,7 +47,7 @@ export function chartSeries(history, kind, window = historyWindow(history)) {
   if (kind === 'chemistry') return [['sugar', 0, sugarMax, 'warm'], ['ph', phMin, phMax, 'cool']];
   if (kind === 'ph') return [['ph', phMin, phMax, 'cool']];
   if (kind === 'sugar') return [['sugar', 0, sugarMax, 'warm']];
-  const peak = Math.max(kind === 'oxygen' ? .5 : kind === 'co2' || kind === 'flow' ? .1 : 1, ...values(kind));
+  const peak = Math.max(kind === 'oxygen' ? .5 : kind === 'co2' || kind === 'flow' ? .1 : kind === 'mold' ? 100 : 1, ...values(kind));
   const step = 10 ** Math.floor(Math.log10(peak)) / 5;
   return [[kind, 0, Math.ceil(peak / step) * step, kind === 'co2' ? 'gas' : kind === 'oxygen' ? 'cool' : 'warm']];
 }
@@ -54,7 +55,7 @@ export function chartSeries(history, kind, window = historyWindow(history)) {
 export function formatChartValue(value, key) {
   if (!Number.isFinite(value)) return 'Not recorded';
   if (value !== 0 && Math.abs(value) < .001) return value.toExponential(1);
-  const precision = { ph: 2, sugar: 1, acid: 2, ethanol: 2, oxygen: 3, co2: 3, temperature: 1, yeast: 0, bacteria: 0 };
+  const precision = { ph: 2, sugar: 1, acid: 2, ethanol: 2, oxygen: 3, co2: 3, temperature: 1, yeast: 0, bacteria: 0, mold: 1 };
   return key in precision ? value.toFixed(precision[key]) : Number(value.toPrecision(3)).toString();
 }
 

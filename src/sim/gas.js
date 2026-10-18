@@ -1,11 +1,11 @@
-import { clamp } from './constants.js';
+import { FILM_CUTOFF, clamp } from './constants.js';
 import { impulseSurface } from './surface.js';
 import { canopyGap, collectPockets, pocketOutlet, spreadPocketLoad } from './pockets.js';
 import { worldFilm } from './film-body.js';
 import { vesselGravity } from './vessel.js';
 
 export function releaseGas(sim, column) {
-  if (worldFilm(sim).density[column] > 0) return;
+  if (worldFilm(sim).density[column] >= FILM_CUTOFF) return;
   const amount = sim.gas.pockets[column];
   if (amount <= 0) return;
   sim.gas.pockets[column] = 0;
@@ -55,14 +55,15 @@ export function stepGas(sim, dt, motionDt) {
     const column = sim.surfaceIndex(bubble.x, bubble.z);
     const water = sim.surface.displacement[column];
     const filmDepth = clamp((contact.displacement[column] - water) / Math.max(.02, sim.volume - water), 0, .95);
-    const hitsFilm = contact.density[column] > 0 && previousY >= filmDepth - .005 && bubble.y <= filmDepth + .015;
+    const covered = contact.density[column] >= FILM_CUTOFF;
+    const hitsFilm = covered && previousY >= filmDepth - .005 && bubble.y <= filmDepth + .015;
     if (!hitsFilm && bubble.y > .015) {
       bubble.y = Math.min(.985, bubble.y);
       gas.bubbles[rising++] = bubble;
       continue;
     }
     const amount = .28 * bubble.size ** 3;
-    if (!hitsFilm && filmDepth > .025 && contact.density[column] > 0) ventGas(sim, column, amount, bubble.x, bubble.z);
+    if (!hitsFilm) ventGas(sim, column, amount, bubble.x, bubble.z);
     else gas.pockets[column] += amount;
   }
   gas.bubbles.length = rising;
@@ -73,7 +74,7 @@ export function stepGas(sim, dt, motionDt) {
   const previous = sim.gasBuffer ||= new Float64Array(gas.pockets.length);
   previous.set(gas.pockets);
   const migrate = (i, j) => {
-    if (Math.min(contact.density[i], contact.density[j]) <= 0) return;
+    if (Math.min(contact.density[i], contact.density[j]) < FILM_CUTOFF) return;
     // Lifted cellulose opens a much more mobile gas channel. A closed sheet
     // retains the slow baseline migration, with symmetric conservative flux.
     const opening = Math.min(1, Math.min(canopyGap(sim, i, contact), canopyGap(sim, j, contact)) / .008);
@@ -86,8 +87,8 @@ export function stepGas(sim, dt, motionDt) {
     if (z + 1 < sim.nz) migrate(i, i + sim.nx);
   }
   for (let x = 0; x < gas.pockets.length; x++) {
-    // Only exposed water pops here. Even a very thin sheet is a barrier.
-    if (gas.pockets[x] > 0 && contact.density[x] <= 0) {
+    // Unconnected traces below the visible film contour cannot trap gas.
+    if (gas.pockets[x] > 0 && contact.density[x] < FILM_CUTOFF) {
       const amount = gas.pockets[x]; gas.pockets[x] = 0; ventGas(sim, x, amount);
     }
   }
@@ -102,7 +103,7 @@ export function stepGas(sim, dt, motionDt) {
   // but can still leave when it reaches its own lifted, exposed edge.
   const outlet = sim.smallPocketOutlet ||= {};
   for (let i = 0; i < gas.pockets.length; i++) {
-    if (labels[i] >= 0 || gas.pockets[i] <= 0 || contact.density[i] <= 0) continue;
+    if (labels[i] >= 0 || gas.pockets[i] <= 0 || contact.density[i] < FILM_CUTOFF) continue;
     outlet.edge = -1; outlet.opening = 0; pocketOutlet(sim, i, outlet, contact);
     if (outlet.edge < 0) continue;
     const amount = gas.pockets[i]; gas.pockets[i] = 0;

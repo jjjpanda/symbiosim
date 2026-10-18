@@ -6,6 +6,28 @@ import { stepPellicle } from '../src/sim/pellicle.js';
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} differs from ${b}`);
 
+test('bare water and invisible cellulose traces release surface bubbles instead of trapping a grid', () => {
+  for (const density of [0, 1e-12, .005, .0349]) {
+    const sim = new Simulation({ starterFilm: false }); sim.agents = [];
+    sim.pellicle.fill(density);
+    sim.gas.pockets.fill(.1);
+    sim.stepGas(0, 0);
+    assert.ok(sim.gas.pockets.every(amount => amount === 0));
+    assert.equal(collectPockets(sim).count, 0);
+    // A rising bubble pops at its actual position, without snapping to a cell.
+    sim.gas.bursts = [];
+    sim.vx.fill(0); sim.vy.fill(0); sim.vz.fill(0);
+    sim.gas.bubbles = [{ id: 1, x: .43, y: .02, z: .57, size: 1 }];
+    sim.stepGas(0, .02);
+    assert.equal(sim.gas.bubbles.length, 0);
+    assert.ok(sim.gas.pockets.every(amount => amount === 0));
+    assert.equal(sim.gas.bursts.length, 1);
+    near(sim.gas.bursts[0].x, .43); near(sim.gas.bursts[0].z, .57);
+    sim.stepGas(0, .33);
+    assert.equal(sim.gas.bursts.length, 0, 'The pop disappears on the motion clock');
+  }
+});
+
 test('under-film gas joins across width and depth without changing its inventory or centroid', () => {
   const sim = new Simulation(); sim.pellicle.fill(.8);
   const i = sim.surfaceIndex(.5, .5);
@@ -149,8 +171,8 @@ test('excess load stays under an isolated patch until that patch lifts at its si
   near(sim.pellicle[center], .8);
 });
 
-test('thin and heavily loaded intact sheets never vent through their interior or the public release method', () => {
-  for (const density of [.00001, .005, .05, .4, 1]) {
+test('visible and heavily loaded intact sheets never vent through their interior or the public release method', () => {
+  for (const density of [.035, .05, .4, 1]) {
     const sim = new Simulation(); sim.agents = []; sim.pellicle.fill(density);
     const center = sim.surfaceIndex(.5, .5);
     sim.gas.pockets[center] = 5; sim.membrane.displacement[center] = -.06;
@@ -175,7 +197,7 @@ test('a thin sheet bends farther under the same gas load without losing its cell
 });
 
 test('subvisual gas escapes only beside an exposed and lifted edge, without wrapping rows or crossing dry gaps', () => {
-  const sim = new Simulation(); sim.agents = []; sim.pellicle.fill(.001);
+  const sim = new Simulation(); sim.agents = []; sim.pellicle.fill(.04);
   const center = sim.surfaceIndex(.5, .5); sim.gas.pockets[center] = .05;
   sim.membrane.displacement[center] = -.02;
   sim.stepGas(0, 0); assert.equal(sim.gas.released, 0);
@@ -198,7 +220,7 @@ test('overloaded closed pockets round-trip and legacy version 9 remains readable
   assert.equal(sim.gas.released, 0);
   near(sim.gas.pockets[center], 20);
   const data = sim.snapshot(), restored = Simulation.restore(data);
-  assert.equal(data.version, 13); assert.deepEqual(restored.snapshot(), data);
+  assert.equal(data.version, 14); assert.deepEqual(restored.snapshot(), data);
   for (const invalid of [-1, NaN, Infinity, Number.MAX_VALUE]) {
     const bad = structuredClone(data); bad.gas.pockets[center] = invalid;
     assert.throws(() => Simulation.restore(bad), /gas tracers/);

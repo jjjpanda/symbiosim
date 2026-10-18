@@ -32,12 +32,23 @@ export function materialPoint(sim, x, z, out = [0, 0]) {
   return out;
 }
 
-export function filmPoint(sim, x, z, out = [0, 0]) {
+function filmDiscPoint(sim, x, z, out) {
   const body = sim.membrane.body, pose = body.pose;
   const c = Math.cos(pose.angle), s = Math.sin(pose.angle);
   toDisc(x + sample(sim, body.offsetX, x, z), z + sample(sim, body.offsetZ, x, z), out);
   const px = out[0], pz = out[1];
-  return fromDisc(px * c - pz * s + pose.x, px * s + pz * c + pose.z, out);
+  out[0] = px * c - pz * s + pose.x;
+  out[1] = px * s + pz * c + pose.z;
+  return out;
+}
+
+export function filmPoint(sim, x, z, out = [0, 0]) {
+  filmDiscPoint(sim, x, z, out);
+  // Resolve each material point against the wall. An averaged rigid-body
+  // correction alone cannot contain the contour between simulation nodes.
+  const distance = Math.hypot(out[0], out[1]);
+  if (distance > .5) { out[0] *= .5 / distance; out[1] *= .5 / distance; }
+  return fromDisc(out[0], out[1], out);
 }
 
 export function sampleFilm(sim, field, x, z) {
@@ -95,9 +106,8 @@ function stepRigidPose(sim, body, scratch, dt) {
   // zeroing the entire body's motion whenever one corner reaches it.
   let wallX = 0, wallZ = 0, contacts = 0;
   for (let i = 0; i < sim.pellicle.length; i++) {
-    if (sim.pellicle[i] < .06) continue;
-    filmPoint(sim, (i % sim.nx + .5) / sim.nx, (Math.floor(i / sim.nx) + .5) / sim.nz, point);
-    toDisc(point[0], point[1], point);
+    if (sim.pellicle[i] < FILM_CUTOFF) continue;
+    filmDiscPoint(sim, (i % sim.nx + .5) / sim.nx, (Math.floor(i / sim.nx) + .5) / sim.nz, point);
     const distance = Math.hypot(point[0], point[1]);
     if (distance <= .495) continue;
     const nx = point[0] / distance, nz = point[1] / distance, penetration = distance - .495;

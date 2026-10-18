@@ -267,6 +267,10 @@ dialog h2 { margin: 0; font-size: 23px; letter-spacing: -.5px; font-weight: 500;
 @media (max-width: 900px) { .history-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (max-width: 540px) { .history-grid { grid-template-columns: minmax(0, 1fr); } }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.mold-dialog { max-width: 440px; }
+.mold-dialog p { color: var(--muted); line-height: 1.6; }
+.mold-dialog .session-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.mold-dialog button { min-height: 44px; }
 :host([transparent]) .instruments, :host([transparent]) .left-rail { background: var(--glass); border-radius: 24px; padding: 16px; backdrop-filter: blur(24px); }
 @container (max-width: 1100px) {
   .layout {

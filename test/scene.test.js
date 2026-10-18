@@ -13,7 +13,8 @@ import { stepPellicle } from '../src/sim/pellicle.js';
 import { pickVoxel, renderVoxel, voxelContext } from '../src/render/voxel.js';
 import { sampleSurface } from '../src/sim/spatial.js';
 import { LIQUID_RADIUS } from '../src/sim/constants.js';
-import { SPECIES_COLORS, FLOW_COLOR, temperatureRange } from '../src/render/palette.js';
+import { toDisc } from '../src/sim/domain.js';
+import { SPECIES_COLORS, FLOW_COLOR, MOLD_COLOR, temperatureRange } from '../src/render/palette.js';
 import { CHEMICAL_COLORS } from '../src/metabolism.js';
 import { scalarColor } from '../src/render/palette.js';
 import { fieldAmount, fieldView, fieldRange, fieldFraction } from '../src/fields.js';
@@ -150,6 +151,39 @@ test('film geometry has a real contour and thickness and moves with the body rat
   sim.membrane.body.pose.angle = 0;
   sim.membrane.body.pose.x = 0;
   assert.deepEqual(sim.snapshot(), before);
+});
+
+test('the entire pellicle contour stays inside the wall through translation, rotation, deformation and height changes', () => {
+  const sim = new Simulation(), film = new Geometry(24000);
+  sim.pellicle.fill(.8); sim.membrane.layers[2].fill(.8);
+  for (const volume of [.05, .72, .95]) for (const angle of [0, .7, 2.1]) {
+    sim.volume = volume;
+    Object.assign(sim.membrane.body.pose, { x: .35, z: -.3, angle });
+    sim.membrane.body.offsetX.fill(.1); sim.membrane.body.offsetZ.fill(-.1);
+    sim.membrane.displacement.fill(-.08);
+    const before = sim.snapshot();
+    for (let u = 0; u <= 1; u += .05) for (let v = 0; v <= 1; v += .05) {
+      const point = filmPoint(sim, u, v), disc = toDisc(...point);
+      assert.ok(Math.hypot(...disc) <= .5 + 1e-7, 'Material contact stays within the circular vessel');
+    }
+    buildFilm(film, sim);
+    for (let i = 0; i < film.count; i++) {
+      const at = i * STRIDE, radius = Math.hypot(film.vertices[at], film.vertices[at + 2]);
+      assert.ok(radius <= interiorRadius(film.vertices[at + 1]) - .0019, 'Top, bottom and edges fit inside the glass');
+    }
+    assert.deepEqual(sim.snapshot(), before, 'Containment never alters material inventory while rendering');
+  }
+});
+
+test('surface pocket sprites require visible pellicle even before the solver clears old gas', () => {
+  const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation({ starterFilm: false });
+  sim.agents = []; sim.pellicle.fill(.005); sim.gas.pockets.fill(.5);
+  const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, overlay: 'liquid', motion: true, particles: [], camera: {}, voxels: {}, isDark: () => true };
+  const before = sim.snapshot();
+  scene.render(view);
+  for (let i = 0; i < scene.count; i++) assert.notEqual(scene.points[i * 9 + 8], 1, 'Invisible cellulose cannot show a static lattice of bubbles');
+  assert.deepEqual(sim.snapshot(), before);
+  scene.dispose();
 });
 test('jet radius follows continuity, hot tea lands at its solver inlet, and outlet drops detach after breakup', () => {
   const taper = new Geometry(100);
@@ -424,6 +458,7 @@ test('scalar probes use the legend curve without size, opacity or cloud amplific
   const low = probes();
   assert.ok(low.length > 50);
   const opacity = scene.points[low[0] + 6], size = scene.points[low[0] + 7];
+  assert.ok(opacity > .9 && size > 4, 'Field samples remain visible above the subdued living context');
   const colors = () => probes().map(at=>Array.from(scene.points.subarray(at+3,at+6)));
   const originalColors = colors();
   assert.ok(originalColors.some(color=>color.every((value,i)=>Math.abs(value-scalarColor(CHEMICAL_COLORS.ethanol,0)[i])<1e-6)));
@@ -448,7 +483,7 @@ test('temperature probes sample the full volume without clouds or column aliasin
   scene.render(view);
   const clouds = Array.from({length:scene.count},(_,i)=>i*9);
   assert.ok(clouds.length > 300, 'Probes must cover the volume rather than a handful of grid columns');
-  assert.ok(clouds.every(at=>scene.points[at+8]!==2 && scene.points[at+7]<=4), 'Temperature uses small sample points, without clouds');
+  assert.ok(clouds.every(at=>scene.points[at+8]!==2 && scene.points[at+7]<=5), 'Temperature uses small sample points, without clouds');
   for(const axis of [0,1,2]) {
     const positions=clouds.map(at=>scene.points[at+axis]);
     assert.ok(Math.max(...positions)-Math.min(...positions)>.5, 'Thermal samples span every spatial axis');
@@ -523,6 +558,60 @@ test('scene reserves capacity for bubbles in dense cultures, suppresses trails u
   const filamentReverse = Array.from(scene.trails.vertices.subarray(0, 2 * STRIDE));
   assert.ok(scene.trails.count >= 2, 'Active cross-feeding pair emits trail filament');
   assert.deepEqual(filamentForward, filamentReverse, 'Cross-feeding partner selection is independent of candidate bacteria array order');
+});
+
+test('green mold spores and pellicle tint remain visible across fields and follow the moving film without mutating state', () => {
+  const { canvas } = mockCanvas(), scene = createScene(canvas), sim = new Simulation();
+  sim.pellicle.fill(.6);
+  for (const layer of sim.membrane.layers) layer.fill(.2);
+  const clean = new Geometry(24000); buildFilm(clean, sim);
+  const column = 3 * sim.nx + 8; sim.mold.coverage[column] = .4;
+  const infected = new Geometry(24000); buildFilm(infected, sim);
+  assert.equal(infected.count, clean.count);
+  let greener = false;
+  for (let i = 0; i < infected.count * STRIDE; i += STRIDE) {
+    if (infected.vertices[i + 7] - infected.vertices[i + 6] > clean.vertices[i + 7] - clean.vertices[i + 6] + .01) greener = true;
+  }
+  assert.equal(greener, true, 'Contamination changes the pellicle color toward green');
+  const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, camera: {}, ratio: 1, motion: false, overlay: 'liquid', isDark: () => true };
+  const spores = () => Array.from({ length: scene.count }, (_, i) => i * 9).filter(at => scene.points[at + 8] === 5);
+  for (const overlay of ['liquid', 'temperature', 'sugar', 'flow']) {
+    const before = sim.snapshot(); view.overlay = overlay; scene.render(view);
+    assert.equal(spores().length, 1);
+    const at = spores()[0];
+    assert.ok(MOLD_COLOR.every((value, j) => Math.abs(scene.points[at + 3 + j] - value) < 1e-6));
+    assert.deepEqual(sim.snapshot(), before);
+  }
+  const first = scene.points[spores()[0]];
+  sim.membrane.body.pose.x += .04; sim.day += .01; scene.render(view);
+  assert.ok(scene.points[spores()[0]] > first + .01, 'Spores travel with the pellicle material');
+  scene.dispose();
+});
+
+test('the mold field colors attached surface colonies without inventing dissolved mold particles', () => {
+  const { canvas } = mockCanvas(), scene = createScene(canvas);
+  const sim = new Simulation({ width: 16, height: 18, depth: 8 });
+  sim.agents = []; sim.pellicle.fill(.6);
+  const first = 3 * sim.nx + 8;
+  sim.mold.coverage[first] = .004; sim.mold.coverage[first + 1] = .008;
+  const view = { sim, canvas: { clientWidth: 560, clientHeight: 710 }, camera: {}, ratio: 1, motion: true, overlay: 'liquid', isDark: () => true };
+  const before = sim.snapshot();
+  scene.render(view);
+  const original = scene.film.vertices.slice(0, scene.film.count * STRIDE);
+  view.overlay = 'mold'; scene.render(view);
+  assert.equal(scene.count, 2, 'Only real surface colonies are emitted, without a volume cloud');
+  const range = fieldRange(sim, 'mold');
+  for (let i = 0; i < scene.count; i++) {
+    const at = i * 9, tint = scalarColor(MOLD_COLOR, fieldFraction(sim.mold.coverage[first + i] * 10000, range));
+    assert.equal(scene.points[at + 8], 5);
+    for (let j = 0; j < 3; j++) near(scene.points[at + 3 + j], tint[j]);
+  }
+  assert.notDeepEqual(scene.film.vertices.slice(0, scene.film.count * STRIDE), original);
+  assert.deepEqual(sim.snapshot(), before, 'The field only observes contamination');
+  view.overlay = 'liquid'; scene.render(view);
+  assert.equal(scene.film.count * STRIDE, original.length);
+  for (let i = 0; i < original.length; i++) near(scene.film.vertices[i], original[i]);
+  scene.dispose();
 });
 
 

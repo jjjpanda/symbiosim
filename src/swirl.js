@@ -32,7 +32,7 @@ export function updateSwirlSpeed(view) {
 
 // One hold lifecycle for mouse, touch, keyboard, focus loss and disconnection.
 export function startSwirl(view) {
-  if (view.swirlHold) return;
+  if (view.swirlHold || view.sim.mold?.failed) return;
   view.swirlHold = { seconds: 0, pending: 0 };
   view.sim.stir(.2);
   updateSwirlSpeed(view);

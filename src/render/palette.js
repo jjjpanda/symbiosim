@@ -1,5 +1,6 @@
 // Species keep the same identity in the vessel and the tracking microscopes.
 export const SPECIES_COLORS = { yeast: [.67, .64, .38], bacteria: [.34, .65, .83] };
+export const MOLD_COLOR = [.32, .53, .19];
 // Fields use their own hues, distinct from yellow yeast, blue bacteria and pale gas.
 export const FLOW_COLOR = [.57, .45, .59];
 export const SCALAR_LOW = [.14, .12, .15];

@@ -1,12 +1,14 @@
 import { Geometry } from './geometry.js';
-import { HEIGHT, liquidPosition, discToMaterial, INNER_WALL } from './space.js';
+import { HEIGHT, liquidPosition, discToMaterial, INNER_WALL, interiorRadius } from './space.js';
 import { FILM_CUTOFF, LIQUID_RADIUS, clamp } from '../sim/constants.js';
 import { toDisc } from '../sim/domain.js';
 import { sampleSurface } from '../sim/spatial.js';
 import { filmPoint } from '../sim/film-body.js';
 import { phFromAcids } from '../sim/chemistry.js';
 import { SPOUT } from './streams.js';
-import { temperatureRange, temperatureColor } from './palette.js';
+import { temperatureRange, temperatureColor, MOLD_COLOR, scalarColor } from './palette.js';
+import { fieldFraction } from '../fields.js';
+import { MOLD_PPM } from '../sim/mold.js';
 const WATER_COLS = 64, WATER_LEVELS = 10;
 const WATER_RIM = Array.from({ length: WATER_COLS + 1 }, (_, col) => {
   const angle = col / WATER_COLS * Math.PI * 2;
@@ -135,7 +137,7 @@ export function buildWater(mesh, sim, overlay = 'liquid') {
     }
 }
 const FILM_COLS = 36, FILM_ROWS = 28, FILM_STRIDE = FILM_COLS + 1;
-const makeFilmVertex = () => ({ p: [0, 0, 0], top: [0, 0, 0], bottom: [0, 0, 0], u: 0, v: 0, uv: [0, 0], density: 0, mature: 0, blister: 0 });
+const makeFilmVertex = () => ({ p: [0, 0, 0], top: [0, 0, 0], bottom: [0, 0, 0], u: 0, v: 0, uv: [0, 0], density: 0, mature: 0, blister: 0, mold: 0 });
 const FILM_GRID = Array.from({ length: FILM_STRIDE * (FILM_ROWS + 1) }, makeFilmVertex);
 const FILM_CLIP = Array.from({ length: 4 }, makeFilmVertex);
 const FILM_TRI = [null, null, null], FILM_POLY = [], FILM_EDGE = [];
@@ -143,13 +145,17 @@ const WALL_COLOR_A = [.74, .61, .39], WALL_COLOR_B = [.83, .72, .49];
 
 // Clip the actual material contour, giving patches a closed, thin, irregular
 // edge. An empty material cell no longer makes an entire square slab.
-export function buildFilm(mesh, sim) {
+export function buildFilm(mesh, sim, moldRange = null) {
   mesh.count = 0;
   const cols = FILM_COLS, rows = FILM_ROWS, cut = FILM_CUTOFF, stride = FILM_STRIDE;
   const world = [0, 0], grid = FILM_GRID;
   const syncBounds = out => {
     const topLift = .002 + out.density * .0055 + out.mature * .0018;
     const bottomDrop = .0055 + out.density * .012;
+    // Thickness can reach the narrowing shoulder even when the centre fits.
+    const radius = Math.min(LIQUID_RADIUS, interiorRadius(out.p[1] + topLift), interiorRadius(out.p[1] - bottomDrop)) - .002;
+    const distance = Math.hypot(out.p[0], out.p[2]);
+    if (distance > radius) { out.p[0] *= radius / distance; out.p[2] *= radius / distance; }
     out.top[0] = out.p[0]; out.top[1] = out.p[1] + topLift; out.top[2] = out.p[2];
     out.bottom[0] = out.p[0]; out.bottom[1] = out.p[1] - bottomDrop; out.bottom[2] = out.p[2];
     return out;
@@ -160,6 +166,7 @@ export function buildFilm(mesh, sim) {
       out.u = u; out.v = v; out.uv[0] = u; out.uv[1] = v;
       out.density = sampleSurface(sim, sim.pellicle, u, v);
       out.mature = sampleSurface(sim, sim.membrane.layers[2], u, v);
+      out.mold = sampleSurface(sim, sim.mold.coverage, u, v);
       filmPoint(sim, u, v, world);
       out.blister = Math.min(1, sampleSurface(sim, sim.gas.pockets, world[0], world[1]) * 1.1);
       toDisc(world[0], world[1], out.p, LIQUID_RADIUS);
@@ -176,6 +183,7 @@ export function buildFilm(mesh, sim) {
     out.uv[0] = out.u; out.uv[1] = out.v;
     out.density = cut;
     out.mature = a.mature + (b.mature - a.mature) * t;
+    out.mold = a.mold + (b.mold - a.mold) * t;
     out.blister = a.blister + (b.blister - a.blister) * t;
     out.p[0] = a.p[0] + (b.p[0] - a.p[0]) * t;
     out.p[1] = a.p[1] + (b.p[1] - a.p[1]) * t;
@@ -211,6 +219,9 @@ export function buildFilm(mesh, sim) {
       topColor[0] = clamp(.85 - matureRatio * .08 + blister * .04, 0, 1);
       topColor[1] = clamp(.82 - matureRatio * .10 + blister * .04, 0, 1);
       topColor[2] = clamp(.71 - matureRatio * .14 + blister * .06, 0, 1);
+      const mold = (a.mold + b.mold + c.mold) / 3;
+      if (moldRange) scalarColor(MOLD_COLOR, fieldFraction(mold * MOLD_PPM, moldRange), topColor);
+      else for (let j = 0; j < 3; j++) topColor[j] += (MOLD_COLOR[j] - topColor[j]) * Math.sqrt(mold);
       bottomColor[0] = .64 - matureRatio * .10;
       bottomColor[1] = .46 - matureRatio * .09;
       bottomColor[2] = .24 - matureRatio * .06;

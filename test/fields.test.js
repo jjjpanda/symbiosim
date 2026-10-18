@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { Simulation } from '../src/engine.js';
 import { CHEMICAL_FIELDS, fieldRange, fieldFraction, formatFieldValue } from '../src/fields.js';
 import { temperatureRange, temperatureColor } from '../src/render/palette.js';
+import { moldCoverage } from '../src/sim/mold.js';
 
 test('each chemical scale follows its measured range regardless of the concentration baseline', () => {
   const sim = new Simulation({ width: 8, height: 12, depth: 4 });
@@ -48,4 +49,20 @@ test('circulation scales solver speed and temperature follows actual deviation f
   assert.deepEqual(fieldRange(sim, 'temperature'), { low: 23.75, high: 24.25, centre: 24, extent: .25, span: .5 });
   const cold = temperatureColor(-1);
   assert.ok(cold[2] > cold[1] && cold[1] > cold[0], 'Cold is blue rather than violet');
+});
+
+test('mold scales local surface ppm and excludes absent film from its overall mean', () => {
+  const sim = new Simulation({ width: 8, height: 12, depth: 4, starterFilm: false });
+  sim.pellicle[0] = sim.pellicle[1] = .6;
+  sim.mold.coverage[0] = .004; sim.mold.coverage[1] = .008;
+  sim.mold.coverage[2] = .9; // Dormant contamination without visible pellicle.
+  const before = sim.snapshot(), range = fieldRange(sim, 'mold');
+  assert.equal(range.low, 40); assert.equal(range.high, 80);
+  assert.ok(Math.abs(range.mean - moldCoverage(sim) * 10000) < 1e-10);
+  assert.equal(fieldFraction(40, range), 0); assert.equal(fieldFraction(80, range), 1);
+  assert.deepEqual(sim.snapshot(), before);
+  sim.pellicle.fill(0);
+  const empty = fieldRange(sim, 'mold');
+  assert.equal(empty.mean, 0); assert.equal(empty.peak, 0);
+  assert.ok(empty.span >= 1);
 });

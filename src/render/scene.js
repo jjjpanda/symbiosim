@@ -2,15 +2,18 @@ import { createProgram } from './webgl.js';
 import { meshVertex, meshFragment, particleVertex, particleFragment } from './scene-shaders.js';
 import { Geometry, STRIDE } from './geometry.js';
 import { createJar, createTap, buildWater, buildFilm, teaColor } from './objects.js';
-import { cameraMatrix, liquidPosition, containInLiquid, discToMaterial, HEIGHT } from './space.js';
+import { cameraMatrix, liquidPosition, containInLiquid, discToMaterial, interiorRadius, HEIGHT } from './space.js';
 import { buildStreams } from './streams.js';
 import { advanceParticles } from './particles.js';
 import { vesselOrientation } from '../sim/vessel.js';
 import { reactionPackets, CHEMICAL_COLORS } from '../metabolism.js';
-import { SPECIES_COLORS, FLOW_COLOR, scalarColor } from './palette.js';
+import { SPECIES_COLORS, FLOW_COLOR, MOLD_COLOR, scalarColor } from './palette.js';
 import { activityTurnover } from './activity.js';
 import { sampleSurface } from '../sim/spatial.js';
 import { fieldView, fieldAmount, fieldRange, fieldFraction } from '../fields.js';
+import { FILM_CUTOFF, LIQUID_RADIUS } from '../sim/constants.js';
+import { filmPoint, sampleFilm } from '../sim/film-body.js';
+import { toDisc } from '../sim/domain.js';
 export function createScene(canvas) {
   const gl = canvas.getContext('webgl2', { alpha: true, antialias: false, premultipliedAlpha: true, depth: false });
   if (!gl)
@@ -195,6 +198,7 @@ export function createScene(canvas) {
         if (amount < .03)
           continue;
         const u = (x + .5) / s.nx, v = (z + .5) / s.nz;
+        if (sampleFilm(s, s.pellicle, u, v) < FILM_CUTOFF) continue;
         liquidPosition(s, u, 0, v, p);
         p[1] = Math.min(p[1], (s.volume - filmDisplacement[i]) * HEIGHT - .018);
         addPoint(p, [.82, .91, .75], .9, Math.min(13, 4 + Math.sqrt(amount) * 6), 1);
@@ -261,7 +265,8 @@ export function createScene(canvas) {
   function synchronize(view) {
     const s = view.sim, coverage = s.coverage(), thermalOverlay = view.overlay === 'temperature';
     const field = fieldView(view.overlay), chemical = field?.chemical;
-    const scalar = thermalOverlay || Boolean(chemical);
+    const moldOverlay = view.overlay === 'mold', moldRange = moldOverlay ? fieldRange(s, 'mold') : null;
+    const scalar = thermalOverlay || Boolean(chemical) || moldOverlay;
     const range = chemical || view.overlay === 'flow' ? fieldRange(s, view.overlay) : null;
     renderSim = s;
     renderHeight = Math.max(100, view.canvas.clientHeight);
@@ -269,8 +274,8 @@ export function createScene(canvas) {
     for (const displacement of s.surface.displacement) deepestSurface = Math.max(deepestSurface, displacement);
     trailCeiling = Math.max(.046, (s.volume - deepestSurface) * HEIGHT - .012);
     const simChanged = state.sim !== s || state.day !== s.day || state.volume !== s.volume || state.coverage !== coverage;
-    if (simChanged) {
-      buildFilm(state.film, s);
+    if (simChanged || state.moldOverlay !== moldOverlay) {
+      buildFilm(state.film, s, moldRange);
       state.revision++;
     }
     if (simChanged || state.thermalOverlay !== thermalOverlay || (thermalOverlay && state.thermalRoom !== s.settings.room)) {
@@ -284,6 +289,7 @@ export function createScene(canvas) {
     state.overlay = view.overlay;
     state.thermalOverlay = thermalOverlay;
     state.thermalRoom = s.settings.room;
+    state.moldOverlay = moldOverlay;
     advanceParticles(view, 0);
     state.count = 0;
     state.overflow = 0;
@@ -295,13 +301,31 @@ export function createScene(canvas) {
     state.stream = buildStreams(state.streams, s, (...args) => addPoint(...args, false));
     // Keep actual cells visible without competing with the quantitative samples.
     emitOrganismsAndGas(view, s, p, old, mark, scalar);
+    // Spores stay attached to the moving material, above its rendered top.
+    const moldTint = [0, 0, 0];
+    for (let i = 0; i < s.pellicle.length; i++) {
+      const amount = s.mold.coverage[i];
+      if (amount < .001 || s.pellicle[i] < FILM_CUTOFF) continue;
+      const u = (i % s.nx + .5) / s.nx, v = (Math.floor(i / s.nx) + .5) / s.nz;
+      filmPoint(s, u, v, current);
+      toDisc(current[0], current[1], p, LIQUID_RADIUS);
+      p[2] = p[1];
+      const blister = Math.min(1, sampleSurface(s, s.gas.pockets, current[0], current[1]) * 1.1);
+      p[1] = (s.volume - s.membrane.displacement[i]) * HEIGHT + .004 + s.pellicle[i] * .0055 + s.membrane.layers[2][i] * .0018 + blister * .003;
+      const size = moldOverlay ? 5 : 2 + Math.sqrt(amount) * 5;
+      const radius = interiorRadius(p[1]) - spriteMargin(p, size, 5) - .002;
+      const distance = Math.hypot(p[0], p[2]);
+      if (distance > radius) { p[0] *= radius / distance; p[2] *= radius / distance; }
+      const tint = moldOverlay ? scalarColor(MOLD_COLOR, fieldFraction(fieldAmount(s, 'mold', i), moldRange), moldTint) : MOLD_COLOR;
+      addPoint(p, tint, .9, size, 5, false);
+    }
     // 2. Emit metabolic packets and cross-feeding links within a bounded budget.
     emitMetabolicInteractions(view, s, p, mark, mate, Math.min(6800, state.count + 3200));
     // Temperature is a scalar volume, sampled at distributed tracer positions.
     // Stepping a flattened grid by nx aliases every sample to one x column.
     const thermal = thermalOverlay ? fieldRange(s, 'temperature') : null, thermalTint = [0, 0, 0], scalarTint = [0, 0, 0];
     // 4. Fill remaining capacity with ambient chemical tracers and flow streaks.
-    for (let i = 0; i < particles.length && state.count < 8192; i += 3) {
+    for (let i = 0; !moldOverlay && i < particles.length && state.count < 8192; i += 3) {
       const x = particles[i], y = particles[i + 1], z = particles[i + 2], index = s.index(x, y, z);
       const heat = thermal ? Math.max(-1, Math.min(1, (s.temperature[index] - thermal.centre) / thermal.extent)) : 0;
       const amount = range ? fieldAmount(s, view.overlay, index) : 1;
@@ -310,8 +334,8 @@ export function createScene(canvas) {
       if (range && amount <= 0)
         continue;
       liquidPosition(s, x, y, z, p);
-      addPoint(p, color, range || thermal ? .72 : view.overlay === 'liquid' ? .20 : .24,
-        range || thermal ? 3.5 : 1.8, range || thermal ? 4 : 0);
+      addPoint(p, color, range || thermal ? .94 : view.overlay === 'liquid' ? .20 : .24,
+        range || thermal ? 4.5 : 1.8, range || thermal ? 4 : 0);
       if (view.motion && (view.overlay === 'flow' || view.overlay === 'liquid') && i / 3 % 7 === 0) {
         emitCurrentPath(s, x, y, z, FLOW_COLOR, view.overlay === 'liquid' ? .16 : .48, range);
       }

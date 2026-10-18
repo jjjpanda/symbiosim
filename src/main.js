@@ -10,10 +10,11 @@ import { pellicleStats, SKIM_THICKNESS } from './sim/pellicle.js';
 import { teaColor } from './render/objects.js';
 import { pickVoxel, renderVoxel } from './render/voxel.js';
 import { fieldView, fieldRange, formatFieldValue } from './fields.js';
-import { temperatureRange, cssColor } from './render/palette.js';
+import { temperatureRange, cssColor, MOLD_COLOR } from './render/palette.js';
 import { CHEMICAL_COLORS } from './metabolism.js';
 import { updateFieldHistory, updateHistoryDialog } from './history.js';
 import { bindSwirl, startSwirl, stopSwirl, advanceSwirl, updateSwirlSpeed } from './swirl.js';
+import { updateMold } from './mold-ui.js';
 
 const SPEEDS = [1, 4, 12, 30, 60];
 const SETTINGS = [['room', 1], ['swing', 1], ['permeability', 100]];
@@ -77,6 +78,7 @@ export class SymbiosimVessel extends HTMLElement {
     const style = getComputedStyle(this);
     this.palette = Object.fromEntries(['fg', 'warm', 'cool', 'gas'].map(key => [key, style.getPropertyValue('--' + key).trim()]));
     for (const [chemical, color] of Object.entries(CHEMICAL_COLORS)) this.palette[chemical] = cssColor(color);
+    this.palette.mold = cssColor(MOLD_COLOR);
     this.updateReadings(); this.draw();
   }
   announce(text) { this.$('[role=status]').textContent = text; }
@@ -111,6 +113,11 @@ export class SymbiosimVessel extends HTMLElement {
       this.$('#field-low').textContent = `${fmt(low)}°C`;
       this.$('#field-high').textContent = `${fmt(high)}°C`;
       reading = `${fmt(this.sim.meanTemperature())}°C in tea · ${fmt(this.sim.settings.room)}°C room average`;
+    } else if (field.id === 'mold') {
+      const { mean, peak, low, high, span } = fieldRange(this.sim, 'mold');
+      this.$('#field-low').textContent = `${formatFieldValue(low, span)} ppm`;
+      this.$('#field-high').textContent = `${formatFieldValue(high, span)} ppm`;
+      reading = `${formatFieldValue(mean, span)} ppm on pellicle · peak patch ${formatFieldValue(peak, span)} ppm · restart above 100 ppm`;
     }
     this.$('#field-reading').textContent = reading;
   }
@@ -163,14 +170,15 @@ export class SymbiosimVessel extends HTMLElement {
     }
     this.addEventListener('keydown', e => {
       const target = e.composedPath()[0];
-      if (e.ctrlKey || e.metaKey || e.altKey || target.matches?.('input, select, summary') || (target.matches?.('button') && [' ', 'Enter'].includes(e.key)) || this.$('#panel').open || this.$('#detail').open) return;
+      if (e.ctrlKey || e.metaKey || e.altKey || target.matches?.('input, select, summary') || (target.matches?.('button') && [' ', 'Enter'].includes(e.key)) || this.$('#panel').open || this.$('#detail').open || this.$('#mold-dialog').open) return;
       if (e.key.toLowerCase() === 'w') { startSwirl(this); e.preventDefault(); }
       else if (this.command(e.key.toLowerCase(), e.shiftKey)) e.preventDefault();
     });
     this.$('#speed').oninput = e => { this.sim.speed = Number(e.target.value); this.updateControls(false); };
     this.$$('[data-preset]').forEach(button => button.onclick = () => {
       const name = button.dataset.preset;
-      if (!REGIMES[name]) return;
+      if (!REGIMES[name] || this.sim.mold.failed) return;
+      stopSwirl(this);
       const regime = this.sim.applyPreset(name);
       this.activePreset = name;
       this.updateControls(); this.updateReadings(); this.draw();
@@ -188,17 +196,17 @@ export class SymbiosimVessel extends HTMLElement {
     for (const [, id] of OUTPUTS.slice(3)) this.$('#' + id).oninput = () => this.updateControls(false);
     const value = id => Number(this.$('#' + id).value);
     for (const [id, key] of [['auto-drain', 'autoDrain'], ['tea-mode', 'teaMode'], ['auto-skim', 'autoSkim']]) {
-      this.$('#' + id).onchange = e => { this.sim.care[key] = e.target.checked; this.updateReadings(); };
+      this.$('#' + id).onchange = e => { this.sim.care[key] = e.target.checked; this.activePreset = null; this.updateControls(false); this.updateReadings(); };
     }
-    for (const [id, key] of [['tea-temp', 'temperature'], ['tea-sugar', 'sugar']]) {
-      this.$('#' + id).oninput = e => { this.sim.care[key] = Number(e.target.value); this.updateControls(false); };
+    for (const [id, key, scale = 1] of [['tea-temp', 'temperature'], ['tea-sugar', 'sugar'], ['harvest-ph', 'harvestPh'], ['drain-amount', 'fraction', 100]]) {
+      this.$('#' + id).oninput = e => { this.sim.care[key] = Number(e.target.value) / scale; this.activePreset = null; this.updateControls(false); this.updateReadings(); };
     }
     const transfer = (phase, amount, recipe = { temperature: value('tea-temp'), sugar: value('tea-sugar') }) => {
       const accepted = this.sim.startTransfer(phase, amount, recipe);
       if (accepted) this.$('#panel').close?.();
       this.intervene(accepted, phase === 'drain' ? 'Drawing' : 'Pouring tea');
     };
-    this.$('#drain').onclick = () => transfer('drain', value('drain-amount') / 100);
+    this.$('#drain').onclick = () => transfer('drain', this.sim.volume * this.sim.care.fraction);
     this.$('#pour').onclick = () => transfer('pour', value('pour-amount') / 100);
     this.$('#starter').onclick = () => this.intervene(this.sim.addStarter(value('starter-amount') / 100, value('starter-balance') / 100), 'Added starter');
     this.$('#skim').onclick = () => {
@@ -207,6 +215,8 @@ export class SymbiosimVessel extends HTMLElement {
       this.updateReadings(); this.draw();
     };
     this.$('#close-panel').onclick = () => this.$('#panel').close();
+    this.$('#restart-mold').onclick = () => { this.restartVessel(); this.updateReadings(); this.draw(); };
+    this.$('#inspect-mold').onclick = () => this.$('#mold-dialog').close();
     this.$$('dialog').forEach(dialog => dialog.onclick = e => { if (e.target !== dialog) return; const box = dialog.getBoundingClientRect(); if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) dialog.close(); });
     this.$$('[data-close]').forEach(button => button.onclick = () => this.$('#detail').close());
     this.$$('[data-chart]').forEach(button => button.onclick = () => {
@@ -223,6 +233,10 @@ export class SymbiosimVessel extends HTMLElement {
   }
 
   command(key, shift = false) {
+    if (this.sim.mold.failed && [' ', 's', 'w', 'h'].includes(key)) {
+      this.announce('Mold has taken over. Start a new vessel to continue.');
+      return true;
+    }
     if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown'].includes(key)) {
       const horizontal = key === 'arrowleft' ? -1 : key === 'arrowright' ? 1 : 0;
       const vertical = key === 'arrowup' ? -1 : key === 'arrowdown' ? 1 : 0;
@@ -240,10 +254,7 @@ export class SymbiosimVessel extends HTMLElement {
     }
     else if (key === 'n') {
       if (!confirm('Start a new vessel? The current culture will be replaced.')) return true;
-      stopSwirl(this);
-      this.sim = new Simulation({ seed: seed(), width: this.sim.nx, height: this.sim.ny, depth: this.sim.nz });
-      this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
-      this.pending = 0; this.particles = null; this.activePreset = null; this.updateControls();
+      this.restartVessel();
     }
     else if (key === 't') this.setAttribute('theme', this.isDark() ? 'light' : 'dark');
     else if (key === 'c' || key === 'e') { stopSwirl(this); this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
@@ -251,6 +262,16 @@ export class SymbiosimVessel extends HTMLElement {
     else if (key === 'v') this.selectField(OVERLAYS[(OVERLAYS.indexOf(this.overlay) + 1) % OVERLAYS.length]);
     else return false;
     this.updateReadings(); this.draw(); return true;
+  }
+
+  restartVessel() {
+    stopSwirl(this);
+    if (this.$('#mold-dialog').open) this.$('#mold-dialog').close();
+    this.sim = new Simulation({ seed: seed(), width: this.sim.nx, height: this.sim.ny, depth: this.sim.nz });
+    this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
+    this.pending = 0; this.lastFrame = 0; this.particles = null; this.activePreset = null; this.moldNoticeSim = null;
+    this.updateControls();
+    this.announce('Started a fresh vessel.');
   }
 
   intervene(amount, action) { this.announce(amount ? `${action}: ${Math.round(amount * 100)}% of capacity.${this.sim.playing ? '' : ' Paused; Resume or Step to advance.'}` : 'No volume available.'); this.updateReadings(); this.draw(); }
@@ -270,6 +291,8 @@ export class SymbiosimVessel extends HTMLElement {
       this.$('#speed').value = s.speed;
       this.$('#auto-skim').checked = s.care.autoSkim; this.$('#auto-drain').checked = s.care.autoDrain; this.$('#tea-mode').checked = s.care.teaMode;
       this.$('#tea-temp').value = s.care.temperature; this.$('#tea-sugar').value = s.care.sugar;
+      this.$('#harvest-ph').value = s.care.harvestPh;
+      this.$('#drain-amount').value = s.care.fraction * 100;
       for (const [id, scale] of SETTINGS) this.$('#' + id).value = s.settings[id] * scale;
     }
     this.$('#speed-output').textContent = `${fmt(s.speed, 0)} days/min`;
@@ -281,15 +304,21 @@ export class SymbiosimVessel extends HTMLElement {
       button.setAttribute?.('aria-pressed', String(active));
     });
     for (const [id, input, unit] of OUTPUTS) this.$('#' + id + '-output').value = this.$('#' + input).value + unit;
+    this.$('#harvest-ph-output').value = Number(this.$('#harvest-ph').value).toFixed(2);
+    this.$('#harvest-hint').textContent = `Manual and automatic draining use Drain amount: ${Math.round(s.care.fraction * 100)}% of the current liquid. Auto drain runs at pH below ${s.care.harvestPh.toFixed(2)} or sugar below 40 g/L.`;
     for (const id of ['pour', 'drain']) this.$('#' + id).textContent = `${id === 'pour' ? 'Pour' : 'Drain'} ${this.$('#' + id + '-amount').value}%`;
     this.$('#starter').textContent = `Add starter ${this.$('#starter-amount').value}%`;
   }
 
   updateReadings() {
+    updateMold(this);
     if (this.camera) this.updateCamera();
     this.updateField(); updateSwirlSpeed(this);
     const s = this.sim, counts = s.counts();
-    for (const id of ['drain', 'pour', 'starter']) this.$('#' + id).disabled = Boolean(s.care.transfer);
+    for (const id of ['drain', 'pour', 'starter']) this.$('#' + id).disabled = s.mold.failed || Boolean(s.care.transfer);
+    for (const key of [' ', 's']) this.$(`[data-k="${key}"]`).disabled = s.mold.failed;
+    this.$('#swirl').disabled = s.mold.failed;
+    this.$$('[data-preset]').forEach(button => { button.disabled = s.mold.failed; });
     const film = pellicleStats(s);
     const immersion = film.depth * (4 / 3) * 100;
     const position = !film.area ? 'no film' : immersion > .8 ? 'submerged' : immersion > .2 ? 'partly submerged' : 'at surface';
@@ -297,14 +326,14 @@ export class SymbiosimVessel extends HTMLElement {
     this.$('#film-load').value = film.thickness;
     this.$('#pellicle-status').textContent = `${Math.round(film.area * 100)}% coverage · ${position}`;
     this.$('#film-care').textContent = `${s.care.autoSkim ? `Auto skim above ${SKIM_THICKNESS} mm` : 'Manual skimming'} · ${s.care.skims} skims`;
-    this.$('#skim').disabled = s.coverage() < .001;
+    this.$('#skim').disabled = s.mold.failed || s.coverage() < .001;
     this.$('#exchange-count').textContent = `${s.care.exchanges} auto exchanges · ${Math.round(s.volume * 100)}% full`;
     this.$('#care-status').textContent = s.care.autoDrain && s.care.teaMode ? 'Automatic tea care' : s.care.autoDrain ? 'Auto drain · refill off' : s.care.teaMode ? 'Automatic top-up' : 'Manual tea care';
-    this.$('#care-status').title = `Check every half day: harvest ${Math.round(s.care.fraction * 100)}% at pH below 3.52 or sugar below 40 g/L. Retain a living starter. Timing follows the amount and liquid head. Recipe in Conditions.`;
+    this.$('#care-status').title = `Check every ${s.care.interval} day: harvest ${Math.round(s.care.fraction * 100)}% at pH below ${s.care.harvestPh.toFixed(2)} or sugar below 40 g/L. Retain a living starter. Timing follows the amount and liquid head. Recipe in Conditions.`;
     if (s.care.transfer) this.$('#care-status').textContent = `${s.care.transfer.phase === 'drain' ? 'harvesting' : 'pouring tea'} / ${Math.round((1 - s.care.transfer.remaining / s.care.transfer.total) * 100)}%`;
     this.$('#play').textContent = s.playing ? 'Pause' : 'Resume'; this.$('#day').textContent = `DAY ${fmt(s.day, 2)} · ${Math.round(s.volume * 100)}% full`;
     this.$('.play-button path').setAttribute('d', s.playing ? 'M9 5v14M15 5v14' : 'm8 5 11 7-11 7z');
-    this.$('#state').textContent = !counts.yeast && !counts.bacteria ? 'culture lost' : s.playing ? '' : 'paused';
+    this.$('#state').textContent = s.mold.failed ? 'mold takeover' : !counts.yeast && !counts.bacteria ? 'culture lost' : s.playing ? '' : 'paused';
     const readings = { day: s.day, temperature: s.meanTemperature(), sugar: s.sugar(), ph: s.ph() };
     const [pr, pg, pb] = teaColor(readings.ph, 0, 'liquid');
     const phHex = `rgb(${Math.round(pr * 255)}, ${Math.round(pg * 255)}, ${Math.round(pb * 255)})`;
@@ -336,6 +365,7 @@ export class SymbiosimVessel extends HTMLElement {
   advance(days, motionDays = days) {
     this.sim.step(days, motionDays);
     advanceParticles(this, motionDays);
+    if (this.sim.mold.failed) { this.updateReadings(); this.draw(); }
   }
   frame(time) {
     const elapsed = this.lastFrame ? Math.min(.1, (time - this.lastFrame) / 1000) : 0; this.lastFrame = time;

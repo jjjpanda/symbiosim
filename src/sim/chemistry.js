@@ -45,11 +45,15 @@ export function stepChemistry(sim, dt, motionDt = dt) {
     agent.y = reflect(agent.y + vy * motionDt + (sim.random() - .5) * jitter, .012, .988);
     agent.z = reflect(agent.z + vz * motionDt + (sim.random() - .5) * jitter, .015, .985);
     const i = sim.index(agent.x, agent.y, agent.z);
-    const t = sim.temperature[i];
+    const t = sim.temperature[i], ethanol = sim.fields.ethanol[i];
     const heat = clamp(1 - Math.abs(t - 27) / 15, 0, 1.2);
     const localPh = phFromAcids(sim.fields.acetic[i], sim.fields.gluconic[i]);
     const acidPenalty = clamp((localPh - 2.5) / 1.4 * agent.traits.tolerance, .04, 1);
-    const activity = heat * acidPenalty * agent.traits.rate;
+    // Acetic acid bacteria oxidize ethanol as fuel and tolerate ~8-12% ABV
+    // (65-100 g/L), whereas kombucha yeasts slow and die above ~4-6% ABV.
+    const ethanolLimit = (agent.type === 'yeast' ? 32 : 70) * agent.traits.tolerance;
+    const ethanolPenalty = ethanol > ethanolLimit ? clamp(1 - (ethanol - ethanolLimit) / (agent.type === 'yeast' ? 20 : 45), .04, 1) : 1;
+    const activity = heat * acidPenalty * ethanolPenalty * agent.traits.rate;
     agent.age += dt;
     // Rates are actual local reactions per unit biomass, not decorative
     // clocks. Integrated turnover drives the visible molecule transport.
@@ -104,7 +108,8 @@ export function stepChemistry(sim, dt, motionDt = dt) {
     // Thermal injury is local and cumulative; a hot plume can kill cells
     // while the cooler culture survives. Rates remain illustrative.
     const thermalInjury = t > 42 ? Math.min(500, .15 * Math.expm1((t - 42) * .19)) : 0;
-    const hazard = .008 + Math.max(0, agent.age - lifespan) * .003 + (1 - heat) * .08 + thermalInjury;
+    const ethanolInjury = ethanol > ethanolLimit ? Math.min(500, .08 * Math.expm1((ethanol - ethanolLimit) * .12)) : 0;
+    const hazard = .008 + Math.max(0, agent.age - lifespan) * .003 + (1 - heat) * .08 + thermalInjury + ethanolInjury;
     const death = agent.energy <= 0 || sim.random() < -Math.expm1(-dt * hazard);
     if (death) continue;
     const reproduction = agent.type === 'yeast' ? clamp((sim.fields.glucose[i] + sim.fields.fructose[i] + sim.fields.sucrose[i] * .16) / 12, 0, 1) * .64 : clamp(sim.fields.ethanol[i] / 2, 0, 1) * clamp(sim.fields.oxygen[i] / .2, 0, 1) * .65;

@@ -12,6 +12,7 @@ import { sampleVelocity, surfaceIndex } from './sim/spatial.js';
 import { createSurface, impulseSurface, stepSurface } from './sim/surface.js';
 import { createFilmBody, createFilmPose, filmPoint, sampleFilm } from './sim/film-body.js';
 import { createVessel } from './sim/vessel.js';
+import { createMold, stepMold, checkMold, moldPpm } from './sim/mold.js';
 
 const meanOf = values => {
   let sum = 0;
@@ -36,7 +37,7 @@ export class Simulation {
     this.playing = true;
     this.speed = 12;
     this.settings = { room: 24, swing: 4, cover: 'breathable', permeability: .45, convection: 1, variation: .08 };
-    this.care = { autoDrain: true, teaMode: true, autoSkim: true, skims: 0, skimmed: 0, interval: .5, fraction: HARVEST_FRACTION, sugar: 80, temperature: 24, elapsed: 0, exchanges: 0, drained: 0, added: 0 };
+    this.care = { autoDrain: true, teaMode: true, autoSkim: true, skims: 0, skimmed: 0, interval: .5, fraction: HARVEST_FRACTION, harvestPh: 3.52, sugar: 80, temperature: 24, elapsed: 0, exchanges: 0, drained: 0, added: 0 };
     this.headspace = { oxygen: .21, co2: .001 };
     this.fields = {};
     for (const name of FIELDS) this.fields[name] = Array(this.n).fill(0);
@@ -45,6 +46,7 @@ export class Simulation {
     this.vy = Array(this.n).fill(0);
     this.vz = Array(this.n).fill(0);
     this.pellicle = Array(width * depth).fill(0);
+    this.mold = createMold(width * depth, this.seed);
     this.membrane = createMembrane(width * depth);
     // A starter culture commonly includes a mother. Begin with a free-edged
     // raft, leaving room for currents and new cellulose around its perimeter.
@@ -136,7 +138,9 @@ export class Simulation {
   applyPreset(name) {
     const regime = REGIMES[name];
     if (!regime) throw new RangeError(`Unknown preset: ${name}`);
+    if (this.mold.failed) throw new Error('Start a new vessel before applying a preset');
     this.applySettings(regime);
+    if (regime.care) Object.assign(this.care, regime.care);
     return regime;
   }
 
@@ -148,6 +152,7 @@ export class Simulation {
       for (const layer of this.membrane.layers) layer[i] *= .2;
     }
     if (removed > 0) { this.care.skims++; this.care.skimmed += removed; }
+    checkMold(this);
     // Removing most material makes the residual sheet easier to lift. Gas
     // still needs a real exposed edge; skimming cannot vent through the film.
     this.stepGas(0, 0);
@@ -166,6 +171,7 @@ export class Simulation {
   startTransfer(phase, amount, recipe) { return startTransfer(this, phase, amount, recipe); }
 
   step(dt, motionDt = dt) {
+    if (this.mold.failed) return;
     if (!Number.isFinite(dt) || dt <= 0) return;
     if (!Number.isFinite(motionDt) || motionDt <= 0) return;
     // Mechanics and reactions have a fixed bounded clock. Scalar transport
@@ -179,15 +185,19 @@ export class Simulation {
       this.stepGas(sub, motionDt / count);
       stepSurface(this, motionDt / count);
       stepPellicle(this, motionDt / count);
+      stepMold(this, sub);
       this.day += sub;
-      this.stepCare(sub);
+      if (!this.mold.failed) this.stepCare(sub);
+      if (this.mold.failed) { this.record(); break; }
       if (this.day - this.history.at(-1).day >= .08) this.record();
     }
   }
 
   stepCare(dt) {
+    if (this.mold.failed) return;
     const care = this.care;
     if (care.autoSkim && pellicleStats(this, this.careFilmStats ||= {}).thickness >= SKIM_THICKNESS) this.skimPellicle();
+    if (this.mold.failed) return;
     // Finish a lower-outlet draw before replacing it. Each phase takes .12
     // simulated days; the same gradual transfer runs in the UI and headless.
     if (care.transfer) {
@@ -208,7 +218,7 @@ export class Simulation {
     if (care.elapsed + 1e-10 < care.interval) return;
     care.elapsed = Math.max(0, care.elapsed - care.interval);
     let amount = 0, phase = 'pour';
-    if (care.autoDrain && (this.ph() < 3.52 || this.sugar() < 40)) {
+    if (care.autoDrain && (this.ph() < care.harvestPh || this.sugar() < 40)) {
       amount = Math.max(0, Math.min(this.volume * care.fraction, this.volume - MIN_VOLUME));
       phase = 'drain';
       if (amount) care.exchanges++;
@@ -255,6 +265,7 @@ export class Simulation {
       for (let layer = 0; layer < 3; layer++) layers[layer][i] *= Math.exp(-impact / (1 + layer * 2));
       this.pellicle[i] = layers[0][i] + layers[1][i] + layers[2][i];
     }
+    checkMold(this);
     if (!automatic) {
       this.disturb(added);
       this.record();
@@ -314,14 +325,14 @@ export class Simulation {
     let flow = 0;
     for (let i = 0; i < this.n; i++) flow += Math.hypot(this.vx[i], this.vy[i], this.vz[i]);
     this.history.push({ day: this.day, sugar: this.sugar(), ph: this.ph(), yeast, bacteria, temperature: this.meanTemperature(),
-      oxygen: this.mean('oxygen'), co2: this.mean('co2'), ethanol: this.mean('ethanol'), acid: this.mean('acetic') + this.mean('gluconic'), flow: flow / this.n });
+      oxygen: this.mean('oxygen'), co2: this.mean('co2'), ethanol: this.mean('ethanol'), acid: this.mean('acetic') + this.mean('gluconic'), flow: flow / this.n, mold: moldPpm(this) });
     if (this.history.length > 240) this.history.shift();
   }
 
   snapshot() {
-    const { seed, nx, ny, nz, day, volume, speed, settings, care, headspace, fields, temperature, vx, vy, vz, pellicle, membrane, surface, gas, agents, nextAgentId, history } = this;
+    const { seed, nx, ny, nz, day, volume, speed, settings, care, headspace, fields, temperature, vx, vy, vz, pellicle, mold, membrane, surface, gas, agents, nextAgentId, history } = this;
     for (let i = 0; i < pellicle.length; i++) syncCellulose(this, i);
-    return structuredClone({ version: 13, vessel: this.vessel, seed, nx, ny, nz, day, volume, speed, settings, care, headspace, fields, temperature, vx, vy, vz, pellicle, membrane, surface, gas, agents, nextAgentId, history });
+    return structuredClone({ version: 14, vessel: this.vessel, seed, nx, ny, nz, day, volume, speed, settings, care, headspace, fields, temperature, vx, vy, vz, pellicle, mold, membrane, surface, gas, agents, nextAgentId, history });
   }
 
   static restore(data) {
@@ -332,6 +343,7 @@ export class Simulation {
     Object.assign(sim, { seed, day, volume, speed, settings: restoredSettings, headspace, fields, temperature, vx, vy, pellicle, agents, nextAgentId, history });
     if (care !== undefined) sim.care = { ...sim.care, ...care };
     if (gas !== undefined) sim.gas = gas;
+    sim.mold = data.version >= 14 ? structuredClone(data.mold) : createMold(sim.pellicle.length, seed);
     if (data.version >= 6) sim.membrane = structuredClone(data.membrane);
     if (data.version < 11) sim.membrane.body = createFilmBody(sim.pellicle.length);
     if (data.version < 12) sim.membrane.body.pose = createFilmPose();

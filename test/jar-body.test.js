@@ -123,6 +123,26 @@ test('sustained wall-directed flow cannot fold the material map or invalidate it
   assert.deepEqual(sim.membrane.layers, before);
 });
 
+test('thin visible pellicle retains physical contact while drifting into the wall', () => {
+  for (const density of [.035, .05, .059]) {
+    const sim = new Simulation({ width: 16, height: 16, depth: 8, starterFilm: false });
+    const i = 5 * sim.nx + 11, u = 11.5 / sim.nx, v = 5.5 / sim.nz;
+    sim.pellicle[i] = density;
+    sim.vx.fill(2); sim.vz.fill(.2); sim.surface.displacement.fill(0);
+    stepPellicle(sim, 0);
+    const layers = structuredClone(sim.membrane.layers), seed = sim.seed;
+    for (let k = 0; k < 1000; k++) {
+      stepPellicle(sim, .005);
+      const point = filmPoint(sim, u, v), inverse = materialPoint(sim, ...point);
+      assert.ok(point.every(value => value >= 0 && value <= 1));
+      near(inverse[0], u, 1e-6); near(inverse[1], v, 1e-6);
+      near(sampleFilm(sim, sim.pellicle, ...point), density, 1e-6);
+    }
+    assert.deepEqual(sim.membrane.layers, layers);
+    assert.equal(sim.seed, seed);
+  }
+});
+
 test('pouring raises the water around an independent sheet, which submerges then recovers under buoyancy without jumping into air or floating on drain', () => {
   const sim = sheet(), absolute = sim.membrane.displacement[0] - sim.volume;
   sim.pour(.15);

@@ -63,5 +63,27 @@ test('the compact workspace has one control for each tea action and one History 
   assert.equal(ids.length, new Set(ids).size);
   for (const id of ['pour', 'drain', 'skim']) assert.equal((markup.match(new RegExp('id="' + id + '"', 'g')) || []).length, 1);
   assert.doesNotMatch(markup, /quick-feed|quick-drain|care-mode|data-undo/);
+  assert.equal(ids.filter(id => id === 'drain-amount').length, 1);
+  assert.doesNotMatch(markup, /harvest-amount/);
   for (const { kind } of HISTORY_CHARTS) assert.ok(ids.includes('history-chart-' + kind));
+  for (const name of ['vinegar', 'mold']) assert.match(markup, new RegExp('data-preset="' + name + '"'));
+});
+
+test('mold history records surface ppm and preserves gaps in older saves', () => {
+  const sim = new Simulation({ width: 8, height: 8, depth: 2, starterFilm: false });
+  sim.pellicle[0] = sim.pellicle[1] = .6;
+  sim.mold.coverage[0] = .012;
+  sim.record();
+  assert.equal(sim.history.at(-1).mold, 60);
+  const snapshot = sim.snapshot(); delete snapshot.history[0].mold;
+  assert.deepEqual(Simulation.restore(snapshot).history, snapshot.history);
+  const svg = { viewBox: { baseVal: { width: 320, height: 160 } }, innerHTML: '' };
+  drawChart(svg, snapshot.history, 'mold', { mold: '#526f36' }, historyWindow(snapshot.history), true);
+  assert.doesNotMatch(svg.innerHTML, /NaN|undefined|Infinity/);
+  assert.match(svg.innerHTML, /#526f36/);
+  assert.ok(chartSeries(snapshot.history, 'mold')[0][2] >= 100, 'The takeover boundary fits on the graph');
+  for (const value of [NaN, -1, 10001]) {
+    const invalid = sim.snapshot(); invalid.history.at(-1).mold = value;
+    assert.throws(() => Simulation.restore(invalid), /Invalid vessel history/);
+  }
 });

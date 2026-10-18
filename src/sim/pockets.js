@@ -3,6 +3,7 @@
 import { edgeSeal } from './pellicle.js';
 import { sampleFilm, worldFilm } from './film-body.js';
 import { atRim } from './spatial.js';
+import { FILM_CUTOFF } from './constants.js';
 export { edgeSeal } from './pellicle.js';
 export { atRim } from './spatial.js';
 
@@ -37,7 +38,7 @@ export function pocketOutlet(sim, i, outlet, contact = worldFilm(sim)) {
   if (opening <= outlet.opening) return;
   for (let axis = 0; axis < 4; axis++) {
     const j = neighbor(sim, i, x, z, axis);
-    if (j < 0 || contact.density[j] > 0) continue;
+    if (j < 0 || contact.density[j] >= FILM_CUTOFF) continue;
     outlet.edge = i; outlet.opening = opening;
     outlet.outletX = (x + .5 + (axis === 0 ? -.5 : axis === 1 ? .5 : 0)) / sim.nx;
     outlet.outletZ = (z + .5 + (axis === 2 ? -.5 : axis === 3 ? .5 : 0)) / sim.nz;
@@ -58,7 +59,7 @@ export function collectPockets(sim, contact = worldFilm(sim)) {
   labels.fill(-1);
   let count = 0, end = 0;
   for (let seed = 0; seed < n; seed++) {
-    if (labels[seed] >= 0 || gas[seed] < threshold || density[seed] <= 0) continue;
+    if (labels[seed] >= 0 || gas[seed] < threshold || density[seed] < FILM_CUTOFF) continue;
     const region = regions[count] ||= {};
     region.start = end; region.amount = region.x = region.z = 0;
     region.edge = -1; region.opening = 0;
@@ -72,7 +73,7 @@ export function collectPockets(sim, contact = worldFilm(sim)) {
       // Four surface neighbors; no diagonal bridge across a dry film gap.
       for (let axis = 0; axis < 4; axis++) {
         const j = neighbor(sim, i, x, z, axis);
-        if (j < 0 || labels[j] >= 0 || gas[j] < threshold || density[j] <= 0) continue;
+        if (j < 0 || labels[j] >= 0 || gas[j] < threshold || density[j] < FILM_CUTOFF) continue;
         labels[j] = count; cells[end++] = j;
       }
     }
@@ -93,7 +94,7 @@ export function spreadPocketLoad(sim, contact = worldFilm(sim)) {
   const density = contact.density;
   let queue, visited;
   for (let seed = 0; seed < n; seed++) {
-    if (gas[seed] <= capacity || density[seed] <= 0) continue;
+    if (gas[seed] <= capacity || density[seed] < FILM_CUTOFF) continue;
     queue ||= sim.pocketLoadQueue ||= new Int16Array(n);
     visited ||= sim.pocketLoadVisited ||= new Uint8Array(n);
     visited.fill(0); visited[seed] = 1; queue[0] = seed;
@@ -103,7 +104,7 @@ export function spreadPocketLoad(sim, contact = worldFilm(sim)) {
       const i = queue[head], x = i % sim.nx, z = Math.floor(i / sim.nx);
       for (let axis = 0; axis < 4 && excess > 1e-12; axis++) {
         const j = neighbor(sim, i, x, z, axis);
-        if (j < 0 || visited[j] || density[j] <= 0) continue;
+        if (j < 0 || visited[j] || density[j] < FILM_CUTOFF) continue;
         visited[j] = 1; queue[end++] = j;
         const amount = Math.min(excess, Math.max(0, capacity - gas[j]));
         gas[j] += amount; excess -= amount;

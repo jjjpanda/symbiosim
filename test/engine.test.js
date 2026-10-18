@@ -231,7 +231,7 @@ test('legacy snapshots retain their flow after velocity unit migration', () => {
   const restored = Simulation.restore(legacy);
   near(restored.vx[0], 2 / sim.nx);
   near(restored.vy[0], -1 / sim.ny);
-  assert.equal(restored.snapshot().version, 13);
+  assert.equal(restored.snapshot().version, 14);
   assert.equal(restored.playing, false);
   assert.deepEqual(restored.agents, legacy.agents);
 });
@@ -491,4 +491,21 @@ test('previous small-draw saves adopt batch harvest while preserving a pending e
   const restored = Simulation.restore(data);
   near(restored.care.fraction, HARVEST_FRACTION);
   assert.deepEqual(restored.care.transfer, data.care.transfer);
+});
+
+test('excess ethanol inhibits and kills yeast while acetic acid bacteria remain tolerant until high ABV', () => {
+  const runAtEthanol = ethanol => {
+    const sim = new Simulation({ seed: 77, width: 12, height: 16 });
+    sim.temperature.fill(27);
+    sim.fields.ethanol.fill(ethanol);
+    for (const agent of sim.agents) agent.traits = { rate: 1, tolerance: 1 };
+    for (let i = 0; i < 20; i++) sim.stepChemistry(.05);
+    return sim.counts();
+  };
+  const moderate = runAtEthanol(58); // ~7.3% ABV: toxic to kombucha yeast, tolerated by AAB.
+  assert.ok(moderate.yeast < 60, `Yeast should die off at 58 g/L ethanol (got ${moderate.yeast})`);
+  assert.ok(moderate.bacteria > 180, `Acetic acid bacteria remain active at 58 g/L ethanol (got ${moderate.bacteria})`);
+  const extreme = runAtEthanol(120); // ~15.2% ABV: lethal to both yeast and AAB.
+  assert.equal(extreme.yeast, 0);
+  assert.ok(extreme.bacteria < 30, `Extreme ethanol kills acetic acid bacteria too (got ${extreme.bacteria})`);
 });

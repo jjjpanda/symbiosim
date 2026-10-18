@@ -83,6 +83,34 @@ test('reconnection resets frame timing and observes motion changes without leaki
   }
 });
 
+test('a takeover stops playback and interventions, and the restart button resets the vessel without another confirmation', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel(); view.draw = () => {};
+    view.isDark = () => false;
+    const dialog = view.$('#mold-dialog');
+    dialog.showModal = () => { dialog.open = true; }; dialog.close = () => { dialog.open = false; };
+    view.sim.mold.coverage.fill(.02);
+    const oldSim = view.sim;
+    view.advance(.01);
+    assert.equal(dialog.open, true); assert.equal(view.sim.playing, false);
+    for (const key of [' ', 's', 'w', 'h']) {
+      const stopped = view.sim.snapshot(); view.command(key);
+      assert.deepEqual(view.sim.snapshot(), stopped);
+    }
+    for (const id of ['drain', 'pour', 'starter', 'skim', 'swirl']) assert.equal(view.$('#' + id).disabled, true);
+    view.$('#inspect-mold').onclick(); view.updateReadings();
+    assert.equal(dialog.open, false);
+    view.$('#restart-mold').onclick();
+    assert.notEqual(view.sim, oldSim);
+    assert.equal(view.sim.day, 0); assert.equal(view.sim.playing, true); assert.equal(view.sim.mold.failed, false);
+    assert.ok(view.sim.mold.coverage.every(value => value === 0));
+    for (const id of ['drain', 'pour', 'starter', 'skim', 'swirl']) assert.equal(view.$('#' + id).disabled, false);
+    assert.deepEqual([view.sim.nx, view.sim.ny, view.sim.nz], [oldSim.nx, oldSim.ny, oldSim.nz]);
+  } finally { globalThis.matchMedia = previousMedia; }
+});
+
 test('each component starts fresh without accessing storage and selects the live phone grid', () => {
   const previousMedia = globalThis.matchMedia;
   const previousStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
@@ -225,6 +253,25 @@ test('manual tea actions use the configured recipe without resuming a paused cul
     assert.deepEqual(view.sim.care.transfer.recipe, { temperature: 40, sugar: 60 });
     assert.equal(view.sim.care.transfer.total, .1);
     view.command('w'); assert.equal(view.sim.playing, false);
+  } finally { globalThis.matchMedia = previousMedia; }
+});
+
+test('selecting mold shows surface coverage and its recorded history while paused', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel(); view.draw = () => {};
+    view.palette = { mold: '#526f36' }; view.sim.playing = false;
+    view.sim.pellicle.fill(.6); view.sim.mold.coverage.fill(.004); view.sim.record();
+    const before = view.sim.snapshot();
+    view.selectField('mold');
+    assert.equal(view.$('#field-title').textContent, 'Mold');
+    assert.match(view.$('#field-reading').textContent, /40\.00 ppm on pellicle.*restart above 100 ppm/);
+    assert.equal(view.$('#field-history-title').textContent, 'Mold history');
+    assert.equal(view.$('#field-history-reading').textContent, '40.0 ppm');
+    assert.match(view.$('#field-history-chart').innerHTML, /#526f36/);
+    assert.deepEqual(view.sim.snapshot(), before);
+    assert.equal(view.sim.playing, false);
   } finally { globalThis.matchMedia = previousMedia; }
 });
 
@@ -400,6 +447,87 @@ test('all presets apply valid covers, keep simulation state finite, and reject i
   assert.throws(() => sim.applySettings({ cover: 'loose' }), RangeError);
   assert.throws(() => sim.applySettings({ room: NaN }), RangeError);
   assert.throws(() => sim.applyPreset('nonexistent'), RangeError);
+});
+
+test('new preset buttons adjust controls while preserving the paused culture and disable after takeover', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel(); view.draw = () => {}; view.isDark = () => false;
+    const buttons = ['vinegar', 'mold'].map(name => ({ dataset: { preset: name }, setAttribute() {} }));
+    view.$$ = selector => selector === '[data-preset]' ? buttons : [];
+    view.bind();
+    const panel = view.$('#panel'); panel.open = true; panel.close = () => { panel.open = false; };
+    view.sim.playing = false; view.pending = 1; view.sceneRenderer = { day: 0 };
+    const ph = view.sim.ph(), history = structuredClone(view.sim.history), temperature = view.sim.meanTemperature();
+    buttons[0].onclick();
+    assert.equal(view.activePreset, 'vinegar'); assert.equal(view.sim.ph(), ph);
+    assert.equal(view.$('#ph').textContent, ph.toFixed(2)); assert.equal(panel.open, true);
+    assert.equal(view.$('#auto-drain').checked, false); assert.equal(view.pending, 1);
+    assert.equal(view.sim.playing, false); assert.equal(view.sceneRenderer.day, 0);
+    buttons[1].onclick();
+    assert.equal(view.activePreset, 'mold'); assert.equal(view.sim.ph(), ph);
+    assert.equal(view.$('#ph').textContent, ph.toFixed(2)); assert.equal(view.sim.playing, false);
+    assert.equal(view.$('#auto-drain').checked, true); assert.equal(view.$('#auto-skim').checked, true);
+    assert.equal(view.$('#tea-temp').value, 22); assert.equal(view.$('#tea-sugar').value, 80);
+    assert.equal(view.$('#harvest-ph').value, 4.5);
+    assert.match(view.$('#harvest-hint').textContent, /Drain amount: 90%.*4\.50/);
+    assert.equal(view.$('#harvest-ph-output').value, '4.50');
+    view.$('#harvest-ph').value = '4.25';
+    view.$('#harvest-ph').oninput({ target: { value: '4.25' } });
+    assert.equal(view.sim.care.harvestPh, 4.25);
+    assert.equal(view.$('#harvest-ph-output').value, '4.25');
+    assert.equal(view.activePreset, null, 'Changing care makes the preset custom');
+    assert.equal(view.$('#mold-status').hidden, true);
+    assert.deepEqual(view.sim.history, history); assert.equal(view.sim.meanTemperature(), temperature);
+    panel.open = false;
+    view.$('#mold-dialog').showModal = () => {};
+    view.sim.mold.failed = true; view.updateReadings();
+    const stopped = view.sim.snapshot();
+    for (const button of buttons) {
+      assert.equal(button.disabled, true); button.onclick();
+      assert.deepEqual(view.sim.snapshot(), stopped);
+    }
+  } finally { globalThis.matchMedia = previousMedia; }
+});
+
+test('one drain amount controls manual and automatic draining as a fraction of current liquid', () => {
+  const previousMedia = globalThis.matchMedia;
+  globalThis.matchMedia = () => ({ matches: false });
+  try {
+    const view = new SymbiosimVessel(); view.isDark = () => false; view.draw = () => {}; view.updateControls();
+    assert.equal(view.$('#drain-amount').value, 65);
+    assert.equal(view.$('#drain-output').value, '65%');
+    view.sim.applyPreset('mold'); view.activePreset = 'mold'; view.updateControls();
+    assert.equal(view.$('#drain-amount').value, 90);
+    view.sim.playing = false;
+    view.$('#drain-amount').value = '65';
+    view.$('#drain-amount').oninput({ target: { value: '65' } });
+    assert.equal(view.sim.care.fraction, .65);
+    assert.equal(view.$('#drain-output').value, '65%');
+    assert.equal(view.$('#drain').textContent, 'Drain 65%');
+    assert.match(view.$('#harvest-hint').textContent, /Drain amount: 65% of the current liquid/);
+    assert.equal(view.activePreset, null);
+    for (const volume of [.5, .9]) {
+      view.sim.volume = volume; view.sim.care.transfer = null;
+      view.$('#drain').onclick();
+      assert.ok(Math.abs(view.sim.care.transfer.total - volume * .65) < 1e-10);
+      assert.equal(view.sim.playing, false);
+      const before = view.sim.snapshot();
+      view.$('#drain-amount').value = '45';
+      view.$('#drain-amount').oninput({ target: { value: '45' } });
+      before.care.fraction = .45;
+      assert.deepEqual(view.sim.snapshot(), before, 'Changing the slider preserves a scheduled drain');
+      assert.equal(Simulation.restore(view.sim.snapshot()).care.fraction, .45);
+      view.sim.care.transfer = null;
+      view.sim.fields.acetic.fill(2); view.sim.care.elapsed = .49;
+      view.sim.stepCare(.01);
+      assert.equal(view.sim.care.transfer.phase, 'drain');
+      assert.ok(Math.abs(view.sim.care.transfer.total - volume * .45) < 1e-10);
+      view.$('#drain-amount').value = '65';
+      view.$('#drain-amount').oninput({ target: { value: '65' } });
+    }
+  } finally { globalThis.matchMedia = previousMedia; }
 });
 
 test('active pour transfer reserves vessel capacity against starter additions and sugar chart adapts above 120 g/L', () => {

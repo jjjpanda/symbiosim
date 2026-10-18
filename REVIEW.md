@@ -1,5 +1,11 @@
 # Symbiosim rework — 2026-10-16
 
+## Mold, ethanol tolerance and field visibility update — 2026-10-18
+
+Surface mold (*Aspergillus* / *Penicillium*) arrives rarely after sustained low-acid, aerobic conditions on exposed pellicle, consumes local surface $\text{O}_2$ and sugar, and is tracked in `ppm`. Low pH and ethanol kill nascent spores before takeover; exceeding `100 ppm` latches failure, pauses the vessel, and offers restart or inspection. Excess ethanol inhibits and kills kombucha yeast above ~4–6% ABV while acetic acid bacteria remain tolerant into the ~8–12% ABV vinegar range. Mold state uses a separate RNG stream and version-14 snapshots; old saves migrate cleanly.
+
+All six presets adjust environmental settings; Pure vinegar and Mold growing also configure care while preserving the current culture and history. One Drain amount slider controls manual and automatic removal as a percentage of current liquid. The pellicle contour resolves against the circular wall and respects the inner shoulder and foot; gas trapping and pocket sprites share `FILM_CUTOFF`. All 168 tests and the production build pass. Browser appearance and native dialog behavior remain unverified.
+
 The renderer now uses one perspective WebGL scene for the vessel, mother, particles, glass, tea and streams. The former Canvas layer/fallback renderers are removed. Fixed buffers and a shared camera/depth pipeline replace the competing projection paths.
 
 ## Interaction and appearance

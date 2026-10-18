@@ -1,9 +1,10 @@
 import { FIELDS, PRESETS, MIN_VOLUME } from './constants.js';
+import { MOLD_LIMIT, MOLD_PPM, moldCoverage } from './mold.js';
 
 const finite = (value, lo, hi = Infinity) => Number.isFinite(value) && value >= lo && value <= hi;
 
 export function validateSnapshot(data) {
-  if (!data || !Number.isInteger(data.version) || data.version < 1 || data.version > 13 ||
+  if (!data || !Number.isInteger(data.version) || data.version < 1 || data.version > 14 ||
     !Number.isInteger(data.nx) || !Number.isInteger(data.ny) || data.nx < 8 || data.nx > 64 || data.ny < 8 || data.ny > 64) {
     throw new Error('Unsupported vessel snapshot');
   }
@@ -44,6 +45,13 @@ export function validateSnapshot(data) {
     !Number.isInteger(data.nextAgentId) || data.nextAgentId <= Math.max(0, ...ids) ||
     (data.wave !== undefined && !finite(data.wave, 0)) || !finite(data.speed, 0, 60)) throw new Error('Invalid vessel clock');
   if (!Array.isArray(data.pellicle) || data.pellicle.length !== surface || data.pellicle.some(value => !finite(value, 0, 1))) throw new Error('Invalid pellicle');
+  if (data.version >= 14) {
+    const mold = data.mold;
+    if (!mold || !Array.isArray(mold.coverage) || mold.coverage.length !== surface || mold.coverage.some(value => !finite(value, 0, 1)) ||
+      !finite(mold.exposure, 0, 3) || !finite(mold.hazard, 0) || !finite(mold.arrival, Number.MIN_VALUE) ||
+      !Number.isInteger(mold.seed) || !finite(mold.seed, 0, 0xffffffff) || typeof mold.failed !== 'boolean') throw new Error('Invalid mold state');
+    if (moldCoverage(data) > MOLD_LIMIT + Number.EPSILON && !mold.failed) throw new Error('Invalid mold failure state');
+  }
   if (data.version >= 6 && (!data.membrane || ['displacement', 'velocity'].some(key =>
     !Array.isArray(data.membrane[key]) || data.membrane[key].length !== surface ||
     data.membrane[key].some(value => !finite(value, key === 'velocity' ? -2 : -.6, key === 'velocity' ? 2 : .76))))) throw new Error('Invalid cellulose membrane');
@@ -71,7 +79,8 @@ export function validateSnapshot(data) {
   if (!Array.isArray(data.history) || !data.history.length || data.history.length > 240 || data.history.some((point, index) =>
     !point || !finite(point.day, 0, data.day) || (index > 0 && point.day < data.history[index - 1].day) ||
     ['sugar', 'ph', 'yeast', 'bacteria', 'temperature'].some(key => !finite(point[key], 0)) ||
-    ['oxygen', 'co2', 'ethanol', 'acid', 'flow'].some(key => point[key] !== undefined && !finite(point[key], 0)))) throw new Error('Invalid vessel history');
+    ['oxygen', 'co2', 'ethanol', 'acid', 'flow'].some(key => point[key] !== undefined && !finite(point[key], 0)) ||
+    (point.mold !== undefined && !finite(point.mold, 0, MOLD_PPM)))) throw new Error('Invalid vessel history');
   if (data.gas !== undefined) {
     const g = data.gas;
     if (!g || !finite(g.credit, 0, .018) || !Number.isInteger(g.nextId) || g.nextId < 1 ||
@@ -89,6 +98,7 @@ export function validateSnapshot(data) {
     }
     if (!c || typeof c.autoDrain !== 'boolean' || typeof c.teaMode !== 'boolean' ||
       !finite(c.interval, .1, 30) || !finite(c.fraction, 1e-12, .95) ||
+      (c.harvestPh !== undefined && !finite(c.harvestPh, 2.4, 4.8)) ||
       !finite(c.sugar, 0, 160) || !finite(c.temperature, 10, 95) ||
       !finite(c.elapsed, 0) || c.elapsed >= c.interval ||
       ['exchanges', 'drained', 'added'].some(key => !finite(c[key], 0))) throw new Error('Invalid automatic care');
