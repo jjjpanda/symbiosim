@@ -33,7 +33,7 @@ in float vImmersion;
 flat in int vMaterial;
 uniform vec3 uEye; uniform vec3 uBackground;
 uniform sampler2D uBackdrop; uniform vec2 uViewport;
-uniform float uWater; uniform float uRefract; uniform float uTransparent;
+uniform float uWater; uniform float uRefract; uniform float uTransparent; uniform float uEmbed;
 out vec4 color;
 float noise(vec2 p) {
   vec2 i=floor(p), f=fract(p); f=f*f*(3.-2.*f);
@@ -60,6 +60,14 @@ void main() {
   float spec=pow(max(0.,dot(reflect(-lightDir,n),eye)),70.);
   if(vMaterial==1 || vMaterial==2 || vMaterial==5) {
     float fresnel=.035+.965*pow(1.-facing,5.);
+    // Keep the glass silhouette and studio reflections readable in small embeds,
+    // including when the host page supplies the transparent background.
+    if(vMaterial==1 && uEmbed>.5) {
+      float rim=pow(1.-facing,2.);
+      float glint=smoothstep(.9,1.6,max(reflected.r,max(reflected.g,reflected.b)));
+      fresnel=clamp(fresnel+.12*rim+.18*glint,0.,1.);
+      reflected=mix(reflected,vec3(.78,.91,1.),.24);
+    }
     float bend=vMaterial==1?.0035:vMaterial==2?.0028:.0055;
     vec4 back=texture(uBackdrop,clamp(gl_FragCoord.xy/uViewport+n.xy*bend,vec2(.001),vec2(.999)));
     vec3 behind=back.rgb+uBackground*(1.-back.a)*(1.-uTransparent);

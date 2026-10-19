@@ -33,7 +33,7 @@ Embed the vessel with an iframe:
 ></iframe>
 ```
 
-The vessel fills the iframe with its panels hidden. Set the iframe's dimensions in the parent page; omit URL `width` and `height` to fill it.
+The vessel fills the iframe. Set the iframe's dimensions in the parent page; omit URL `width` and `height` to fill it.
 
 Query parameters use the [Options](#options) names and defaults; `embed` is always enabled. Set `autoplay=false` to start paused. `transparent` and `autofocus` accept `true` or a bare parameter to enable, and `false` or omission to disable.
 
@@ -61,7 +61,7 @@ Set options with HTML attributes or `setAttribute()`.
 
 | Attribute | Default | Purpose |
 | --- | --- | --- |
-| `embed` | absent | Show only the 3D jar canvas without surrounding UI panels, HUD, or toolbars. |
+| `embed` | absent | Compact jar view with stronger glass highlights. |
 | `transparent` | absent | Transparent host background and alpha-preserving glass/liquid refraction. |
 | `width`, `height` | automatic | Requested component size in pixels, constrained to `min(100%, <px>)`. |
 | `theme` | system | `light` or `dark` (falls back to `prefers-color-scheme`). |
