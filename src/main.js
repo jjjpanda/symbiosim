@@ -1,4 +1,4 @@
-import { Simulation, REGIMES } from './engine.js';
+import { Simulation, REGIMES, MIN_VOLUME } from './engine.js';
 import { draw } from './renderer.js';
 import { vesselTemplate, OVERLAYS, THEME_ICONS } from './template.js';
 import { readingDeltas } from './charts.js';
@@ -380,6 +380,16 @@ export class SymbiosimVessel extends HTMLElement {
     this.$('#harvest-hint').textContent = `Manual and automatic draining use Drain amount: ${Math.round(s.care.fraction * 100)}% of the current liquid. Auto drain runs at pH below ${s.care.harvestPh.toFixed(2)} or sugar below 40 g/L.`;
     for (const id of ['pour', 'drain']) this.$('#' + id).textContent = `${id === 'pour' ? 'Pour' : 'Drain'} ${this.$('#' + id + '-amount').value}%`;
     this.$('#starter').textContent = `Add starter ${this.$('#starter-amount').value}%`;
+    this.updateVesselActions();
+  }
+
+  updateVesselActions() {
+    const s = this.sim;
+    const blocked = s.mold.failed || Boolean(s.care.transfer);
+    const full = s.volume >= .95 - 1e-10;
+    this.$('#drain').disabled = blocked || s.volume <= MIN_VOLUME + 1e-10 || s.care.fraction <= 0;
+    this.$('#pour').disabled = blocked || full || Number(this.$('#pour-amount').value) <= 0;
+    this.$('#starter').disabled = blocked || full || Number(this.$('#starter-amount').value) <= 0;
   }
 
   updateReadings() {
@@ -387,7 +397,7 @@ export class SymbiosimVessel extends HTMLElement {
     if (this.camera) this.updateCamera();
     this.updateField(); updateSwirlSpeed(this);
     const s = this.sim, counts = s.counts();
-    for (const id of ['drain', 'pour', 'starter']) this.$('#' + id).disabled = s.mold.failed || Boolean(s.care.transfer);
+    this.updateVesselActions();
     for (const key of [' ', 's']) this.$(`[data-k="${key}"]`).disabled = s.mold.failed;
     this.$('#swirl').disabled = s.mold.failed;
     this.$$('[data-preset]').forEach(button => { button.disabled = s.mold.failed; });

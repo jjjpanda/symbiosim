@@ -45,8 +45,8 @@ export function createJar() {
 export function createTap() {
   const tap = new Geometry(16000), metal = [.57, .61, .60], dark = [.14, .19, .19];
   const [sx, sy, sz] = SPOUT;
-  // A compact brushed-steel dispenser: thin mounting bezel, smooth elbow,
-  // and a short dark lever. Shared sweep rings avoid intersecting pipe joints.
+  // A compact brushed-steel dispenser with a thin mounting bezel and smooth
+  // elbow. Shared sweep rings avoid intersecting pipe joints.
   const mount = (profile, color) => {
     const start = tap.count;
     tap.lathe(profile, color, 1, 7, 48);
@@ -73,8 +73,6 @@ export function createTap() {
     for(const [point,normal] of [[p,n(path[i],a)],[q,n(path[i],b)],[r,n(path[i+1],b)],
       [p,n(path[i],a)],[r,n(path[i+1],b)],[s,n(path[i+1],a)]]) tap.vertex(point,normal,metal,1,7);
   }
-  tap.tube([[-.552,.19,sz],[-.552,.234,sz]],[.016,.014],metal,7,24);
-  tap.tube([[-.552,.232,sz],[-.552,.249,sz],[-.615,.249,sz]],[.015,.015,.010],dark,0,24);
   const start = tap.count;
   tap.lathe([[.041,sy+.014],[.046,sy+.008],[.045,sy+.003],[.043,sy],[.040,sy+.004],[.040,sy+.012]], metal, 1, 7, 40);
   for (let i = start; i < tap.count; i++) {
