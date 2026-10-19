@@ -31,18 +31,35 @@ export function updateSwirlSpeed(view) {
 }
 
 // One hold lifecycle for mouse, touch, keyboard, focus loss and disconnection.
-export function startSwirl(view) {
+export function startSwirl(view, pointerId = null) {
   if (view.swirlHold || view.sim.mold?.failed) return;
-  view.swirlHold = { seconds: 0, pending: 0 };
-  view.sim.stir(.2);
+  const release = () => stopSwirl(view);
+  const keyRelease = e => { if (['w', ' ', 'enter'].includes(e.key?.toLowerCase?.())) stopSwirl(view); };
+  const win = view.ownerDocument?.defaultView || globalThis;
+  for (const event of ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'blur']) {
+    win.addEventListener?.(event, release, true);
+  }
+  win.addEventListener?.('keyup', keyRelease, true);
+  view.swirlHold = { seconds: 0, pending: 0, pointerId, release, keyRelease, win };
+  view.sim.stir(.35);
   updateSwirlSpeed(view);
   view.$('#swirl').setAttribute('aria-pressed', 'true');
-  view.announce(view.sim.playing ? 'Swirling. Hold to build speed.' : 'Swirl queued. Resume or Step to see the tea move.');
 }
 
 export function stopSwirl(view) {
+  const hold = view.swirlHold;
+  const button = view.$?.('#swirl');
+  if (hold) {
+    if (hold.pointerId != null && button?.hasPointerCapture?.(hold.pointerId)) {
+      try { button.releasePointerCapture(hold.pointerId); } catch {}
+    }
+    for (const event of ['pointerup', 'pointercancel', 'mouseup', 'touchend', 'blur']) {
+      hold.win?.removeEventListener?.(event, hold.release, true);
+    }
+    hold.win?.removeEventListener?.('keyup', hold.keyRelease, true);
+  }
   view.swirlHold = null;
-  view.$?.('#swirl')?.setAttribute('aria-pressed', 'false');
+  button?.setAttribute('aria-pressed', 'false');
 }
 
 export function advanceSwirl(view, elapsed) {
@@ -50,22 +67,26 @@ export function advanceSwirl(view, elapsed) {
   if (!hold) return;
   hold.seconds += elapsed;
   hold.pending += elapsed;
-  while (hold.pending >= .12) {
-    hold.pending -= .12;
-    view.sim.stir(Math.min(.35, .04 + hold.seconds * .05));
+  while (hold.pending >= .08) {
+    hold.pending -= .08;
+    view.sim.stir(Math.min(1, .08 + hold.seconds * .18));
     updateSwirlSpeed(view);
   }
 }
 
 export function bindSwirl(view) {
   const button = view.$('#swirl');
-  button.oncontextmenu = e => e.preventDefault();
+  button.oncontextmenu = e => { e.preventDefault(); stopSwirl(view); };
   button.onpointerdown = e => {
     if (e.button !== 0) return;
     button.focus();
-    button.setPointerCapture(e.pointerId); startSwirl(view);
+    try { button.setPointerCapture?.(e.pointerId); } catch {}
+    startSwirl(view, e.pointerId);
   };
-  button.onpointerup = button.onpointercancel = button.onlostpointercapture = () => stopSwirl(view);
+  button.onpointermove = e => {
+    if (view.swirlHold?.pointerId != null && e.buttons === 0) stopSwirl(view);
+  };
+  button.onpointerup = button.onpointercancel = button.onlostpointercapture = button.onblur = () => stopSwirl(view);
   button.onkeydown = e => {
     if (![' ', 'Enter'].includes(e.key)) return;
     e.preventDefault(); e.stopPropagation(); startSwirl(view);

@@ -120,7 +120,7 @@ try {
   const tracking=await checkTrackingLayout();
   assert.equal(tracking.overlap,false);assert.equal(tracking.locks.length,2);
   for(const lock of tracking.locks){assert.equal(lock.species,lock.type);assert.match(lock.summary,/pH/);}
-  assert.equal(tracking.presets,4);assert.equal(tracking.quickTweaks,false);
+  assert.equal(tracking.presets,6);assert.equal(tracking.quickTweaks,false);
   const fields = await evaluate(`(() => {
     const v=document.querySelector('symbiosim-vessel'), results=[];
     for(const option of v.$('#overlay').options) {
@@ -132,7 +132,7 @@ try {
     v.selectField('liquid');
     return results;
   })()`);
-  assert.equal(fields.length,9);
+  assert.equal(fields.length,10);
   for(const field of fields) {
     assert.equal(field.selected,1);assert.ok(field.title&&field.description);
     assert.doesNotMatch(field.reading,/NaN|undefined/);
@@ -161,11 +161,24 @@ try {
     const v=document.querySelector('symbiosim-vessel'), nav=v.$('nav').getBoundingClientRect();
     return Math.abs(nav.left+nav.width/2-innerWidth/2)<2 && !v.$('.trend') && !v.$('nav [data-chart]') && !v.$('.care-heading button');
   })()`),true,'Centered top controls without redundant buttons or culture card');
+  await clickControl('#speed-toggle');
+  const popup=await evaluate(`(() => {
+    const v=document.querySelector('symbiosim-vessel'),p=v.$('#speed-popup'),nav=v.$('nav').getBoundingClientRect(),r=p.getBoundingClientRect();
+    const rail=v.$('.left-rail'),inst=v.$('.instruments').getBoundingClientRect();
+    return {open:!p.hidden,below:r.top>=nav.bottom,instTop:inst.top,navTop:nav.top,railFits:rail.scrollHeight<=rail.clientHeight+1,
+      restart:Boolean(v.$('nav [data-k="n"]')),panelRestart:Boolean(v.$('#panel [data-k="n"]')),hint:Boolean(v.$('.sample-hint'))};
+  })()`);
+  assert.equal(popup.open,true);assert.equal(popup.below,true,'Pace popup opens under the top bar');
+  assert.ok(popup.instTop<=popup.navTop+2,'Right panel starts at the top of the viewport');
+  assert.equal(popup.railFits,true,'Left voxels fit without overflow');
+  assert.equal(popup.restart,true);assert.equal(popup.panelRestart,false);assert.equal(popup.hint,false);
+  await clickControl('#speed-toggle');
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$('#speed-popup').hidden`),true);
   await evaluate(`document.querySelector('symbiosim-vessel').selectField('ethanol')`);
   assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$('#field-history-title').textContent`),'Ethanol history');
   await evaluate(`document.querySelector('symbiosim-vessel').selectField('liquid')`);
   await clickControl('#swirl');
-  assert.match(await evaluate(`document.querySelector('symbiosim-vessel').$('[role=status]').textContent`),/Swirl/i);
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$('[role=status]').textContent`),'');
   assert.match(await evaluate(`document.querySelector('symbiosim-vessel').$('#swirl-speed').textContent`),/rpm/);
   const themeBefore=await evaluate(`document.querySelector('symbiosim-vessel').isDark()`);
   const themeIconBefore=await evaluate(`document.querySelector('symbiosim-vessel').$('[data-k="t"] path').getAttribute('d')`);
@@ -179,7 +192,7 @@ try {
   })()`),true,'SVG and ICO favicon URLs must both load');
   await clickControl('#field-history-open');
   assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$('#detail').open`),true);
-  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$$('.history-card').length`),9);
+  assert.equal(await evaluate(`document.querySelector('symbiosim-vessel').$$('.history-card').length`),10);
   await clickControl('[data-close="detail"]');
   assert.equal(await evaluate(`(() => {const v=document.querySelector('symbiosim-vessel');return ['pour','drain','starter','skim'].every(id=>v.$('#'+id).closest('.care-card') && !v.$('#'+id).closest('dialog'));})()`),true);
   // Exercise actual browser pointer capture and Shift modifiers on both axes.
@@ -209,7 +222,7 @@ try {
       })()`);
       assert.equal(layout.width,layout.scroll);assert.equal(layout.overflow,false);assert.equal((await checkTrackingLayout()).overlap,false);
       assert.match(layout.ph,/^\d+\.\d{2}$/);assert.match(layout.thickness,/mm$/);assert.equal(layout.lens,false);
-      if(width<=1100){assert.ok(layout.field>=380,'Vessel must remain visible below 1100px even if voxel view mode was active');assert.ok(layout.voxel>=150);}
+      if(width<=1100){assert.ok(layout.field>=380,`Vessel must remain visible below 1100px even if voxel view mode was active (${width}px: field ${layout.field})`);assert.ok(layout.voxel>=150,`Voxel too small at ${width}px: ${layout.voxel}`);}
       if(width<=640){assert.ok(layout.touch);assert.ok(layout.field>=380&&layout.field<=650);}
     }
     await evaluate(`document.querySelector('symbiosim-vessel').setViewMode('split')`);
@@ -221,21 +234,23 @@ try {
       v.$('#auto-skim').dispatchEvent(new Event('change'));
       return v.sim.care.autoSkim === false && Number.isFinite(v.sim.headspace.oxygen) && Number.isFinite(v.sim.meanTemperature());
     })()`),true);
-    const embedFit = await evaluate(`(() => {
+    const embedFit = await evaluate(`(async () => {
       const box = document.createElement('div');
       box.style.cssText = 'width: 260px; height: 220px; overflow: hidden;';
       document.body.appendChild(box);
       const v = document.querySelector('symbiosim-vessel');
-      box.appendChild(v);
+      box.appendChild(v); v.style.minHeight = '0';
       v.setAttribute('embed', '');
       v.setAttribute('transparent', '');
       v.setAttribute('width', '420');
       v.setAttribute('height', '520');
+      // Re-parenting a shadow host can briefly reload its linked stylesheet.
+      for (let i = 0; i < 40 && getComputedStyle(v.$('.layout')).display !== 'grid'; i++) await new Promise(r => setTimeout(r, 50));
       const hostRect = v.getBoundingClientRect(), layoutRect = v.$('.layout').getBoundingClientRect(), canvasRect = v.canvas.getBoundingClientRect();
       const hiddenUi = ['.masthead', '.left-rail', '.instruments', '.hud', '.vessel-tools', '.field-footer'].every(sel => v.$(sel).getClientRects().length === 0);
       const bg = getComputedStyle(v).backgroundColor;
       v.removeAttribute('embed'); v.removeAttribute('transparent'); v.removeAttribute('width'); v.removeAttribute('height');
-      document.body.appendChild(v); box.remove();
+      v.style.minHeight = ''; document.body.appendChild(v); box.remove();
       return { hostW: Math.round(hostRect.width), hostH: Math.round(hostRect.height), layoutH: Math.round(layoutRect.height), canvasH: Math.round(canvasRect.height), hiddenUi, bg };
     })()`);
     assert.deepEqual(embedFit, { hostW: 260, hostH: 220, layoutH: 220, canvasH: 220, hiddenUi: true, bg: 'rgba(0, 0, 0, 0)' });
@@ -295,7 +310,7 @@ try {
     box.style.cssText = 'width: 260px; height: 220px; overflow: hidden;';
     document.body.appendChild(box);
     const v = document.querySelector('symbiosim-vessel');
-    box.appendChild(v);
+    box.appendChild(v); v.style.minHeight = '0';
     v.setAttribute('embed', '');
     v.setAttribute('transparent', '');
     v.setAttribute('width', '420');
@@ -307,7 +322,7 @@ try {
     const hiddenUi = ['.masthead', '.left-rail', '.instruments', '.hud', '.vessel-tools', '.field-footer'].every(sel => v.$(sel).getClientRects().length === 0);
     const bg = getComputedStyle(v).backgroundColor;
     v.removeAttribute('embed'); v.removeAttribute('transparent'); v.removeAttribute('width'); v.removeAttribute('height');
-    document.body.appendChild(v); box.remove(); v.draw();
+    v.style.minHeight = ''; document.body.appendChild(v); box.remove(); v.draw();
     return { hostW: Math.round(hostRect.width), hostH: Math.round(hostRect.height), layoutH: Math.round(layoutRect.height), canvasH: Math.round(canvasRect.height), hiddenUi, bg, cornerAlpha: pixels[3], gl: g.getError() };
   })()`);
   assert.deepEqual(embedCheck, { hostW: 260, hostH: 220, layoutH: 220, canvasH: 220, hiddenUi: true, bg: 'rgba(0, 0, 0, 0)', cornerAlpha: 0, gl: 0 });

@@ -11,6 +11,8 @@ export const THEME_ICONS = {
 const icons = {
   pause: icon('M9 5v14M15 5v14'),
   step: icon('m5 5 10 7-10 7zM19 5v14'),
+  restart: icon('M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5'),
+  speed: icon('M12 14 16 10M4.9 19.1a10 10 0 1 1 14.2 0'),
   theme: icon(THEME_ICONS.moon),
   conditions: icon('M4 7h16M4 17h16M9 4v6M15 14v6')
 };
@@ -19,13 +21,17 @@ export function vesselTemplate() {
   return `<link rel="stylesheet" href="${new URL('./style.css', import.meta.url)}">
 <div class="layout" data-view="split">
   <header class="masthead">
-    <div class="identity"><h1>symbiosim<span class="identity-dot" aria-hidden="true"></span></h1></div>
     <nav class="glass" aria-label="Simulation controls">
       <button data-k=" " class="play-button" title="Run or pause · Space">${icons.pause}<span id="play"></span></button>
       <button data-k="s" title="Pause and advance 0.08 days · S">${icons.step}<span>Step</span></button>
+      <button data-k="n" title="Restart vessel · N">${icons.restart}<span>Restart</span></button>
+      <button id="speed-toggle" type="button" aria-expanded="false" aria-controls="speed-popup" title="Simulation pace · F">${icons.speed}<span>Speed</span></button>
       <button data-k="t">${icons.theme}<span>Theme</span></button>
       <button data-k="c" aria-label="Conditions" title="Conditions · C">${icons.conditions}<span>Conditions</span></button>
     </nav>
+    <div id="speed-popup" class="settings speed-popup glass" hidden>
+      <label><span>Pace</span><output id="speed-output" for="speed"></output><input id="speed" type="range" min="1" max="60" step="1" aria-label="Simulated days per minute"></label>
+    </div>
   </header>
   <div class="embed-tabs view-modes glass" role="group" aria-label="Vessel detail panes">
     ${['yeast', 'bacteria', 'actions'].map((pane, index) => `<button type="button" data-embed-pane="${pane}" aria-controls="embed-pane-${pane}" aria-pressed="${index === 0}" class="${index === 0 ? 'on' : ''}">${pane.toUpperCase()}</button>`).join('')}
@@ -38,7 +44,6 @@ export function vesselTemplate() {
         <canvas id="${type}-canvas" class="voxel-canvas" tabindex="0" role="img" aria-label="Close-up following one ${name.toLowerCase()}. Drag or use arrow keys to rotate; R resets."></canvas>
         <div class="voxel-footer"><span class="reaction-caption">${reaction}</span><span id="${type}-summary"></span></div>
       </section>`).join('')}
-      <p class="sample-hint">The ring follows one cell; nearby cells and its path give context. Molecule shapes show active uptake and products.</p>
     </div>
 
     <div class="legend" aria-label="Organism legend"><span><b class="yeast-mark warm" aria-hidden="true"></b> yeast</span><span><b class="bacteria-mark cool" aria-hidden="true"></b> bacteria</span><span><b class="film-mark warm" aria-hidden="true"></b> cellulose</span><span>◎ tracked cell</span></div>
@@ -70,9 +75,6 @@ export function vesselTemplate() {
       <button data-chart="sugar"><span>Sugar</span><strong id="sugar"></strong><small id="sugar-delta" title="Change over the last simulated day; available after day 1."></small></button>
       <button data-chart="ph"><span><i class="ph-dot" id="ph-swatch" aria-hidden="true"></i>pH</span><strong id="ph"></strong><small id="ph-delta" title="Change over the last simulated day; available after day 1."></small></button>
     </div>
-    <div class="settings glass-card">
-      <label><span>Pace</span><output id="speed-output" for="speed"></output><input id="speed" type="range" min="1" max="60" step="1" aria-label="Simulated days per minute"></label>
-    </div>
     <section class="field-browser glass-card" aria-label="Visualization">
       <label class="field-select"><span>Field</span><select id="overlay" aria-label="Vessel visualization">${FIELD_VIEWS.map(({id,name}) => `<option value="${id}">${name}</option>`).join('')}</select></label>
       <div id="field-scale" class="field-scale" aria-hidden="true"></div><div class="field-scale-labels"><span id="field-low"></span><span id="field-high"></span></div>
@@ -95,7 +97,7 @@ export function vesselTemplate() {
       </div>
       <button id="swirl" aria-pressed="false" class="swirl-button" title="Press and hold to build rotational momentum · W"><span>Hold to swirl tea</span><output id="swirl-speed" aria-live="off" aria-label="Estimated liquid rotational speed" title="Estimated visible rotations per minute from the liquid velocity. Paused readings are queued until Resume or Step.">0.0 rpm</output></button>
       <div class="culture-notes"><span id="care-status"></span><span id="exchange-count"></span></div>
-      <section class="film-readings" aria-label="Pellicle readings"><div class="section-label">Pellicle <strong id="film-thickness" title="Mean thickness of covered patches, using the illustrative visual scale."></strong></div><progress id="film-load" max="2.4" value="0" aria-label="Mean pellicle thickness in illustrative millimeters"></progress><span id="pellicle-status"></span><span id="film-care"></span><span id="mold-status" hidden></span></section>
+      <section class="film-readings" aria-label="Pellicle readings"><div class="section-label">Pellicle <strong id="film-thickness" title="Mean thickness of covered patches, using the illustrative visual scale."></strong></div><progress id="film-load" max="2.4" value="0" aria-label="Mean pellicle thickness in illustrative millimeters"></progress><span id="pellicle-status"></span><span id="mold-status" hidden></span></section>
       <p class="action-status" role="status" aria-live="polite"></p>
     </section>
   </aside>
@@ -112,7 +114,6 @@ export function vesselTemplate() {
   <section><h3>Gas exchange</h3><label>Permeability <output id="permeability-output" for="permeability"></output><input id="permeability" type="range" min="0" max="100" step="1"></label><p class="hint">0% seals the vessel. Higher values admit more oxygen and let dissolved gas escape; 100% is fully open.</p></section>
   <section id="exchange-section"><h3>Tea recipe &amp; care</h3><div class="care-controls" role="group" aria-label="Automatic tea care"><label><input id="auto-drain" type="checkbox"> Auto drain</label><label><input id="tea-mode" type="checkbox"> Auto refill</label><label><input id="auto-skim" type="checkbox"> Auto skim</label></div><p class="hint"><span id="harvest-hint"></span> Auto refill tops up to 72% with this recipe; auto skim acts above 2.1 mm. Turn these off for manual care. Pour amounts are percentages of full capacity. Draining leaves at least 4% of vessel capacity. Use the vessel action buttons to pour or drain; Resume or Step advances a paused transfer. Hot tea can injure exposed cells.</p><label>Auto drain below pH <output id="harvest-ph-output" for="harvest-ph"></output><input id="harvest-ph" type="range" min="2.4" max="4.8" step="0.01" value="3.52"></label><label>Drain amount <output id="drain-output" for="drain-amount"></output><input id="drain-amount" type="range" min="1" max="95" step="1" value="65"></label><label>Pour amount <output id="pour-output" for="pour-amount"></output><input id="pour-amount" type="range" min="0" max="50" value="15"></label><label>Tea temperature <output id="tea-temp-output" for="tea-temp"></output><input id="tea-temp" type="range" min="10" max="95" value="24"></label><label>Tea sugar <output id="tea-sugar-output" for="tea-sugar"></output><input id="tea-sugar" type="range" min="0" max="160" value="80"></label></section>
   <details><summary>Add starter culture</summary><label>Starter liquid <output id="starter-output" for="starter-amount"></output><input id="starter-amount" type="range" min="1" max="30" value="8"></label><label>Yeast share <output id="starter-balance-output" for="starter-balance"></output><input id="starter-balance" type="range" min="0" max="100" value="50"></label><p class="hint">Use Add starter in the vessel actions to add this mixture.</p></details>
-  <section><h3>Session</h3><div class="session-actions"><button data-k="n" class="pill-btn">New vessel</button></div></section>
   <p class="panel-note">An illustrative simulation of microbial relationships, not a brewing guide.</p>
 </dialog>
 <dialog id="detail" class="glass history-dialog" aria-labelledby="detail-title">

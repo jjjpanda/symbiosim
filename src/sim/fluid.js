@@ -70,7 +70,7 @@ export function stepFluid(sim, dt) {
     if (z + 1 < nz) b.fz[i + plane] = (b.vz[i] + b.vz[i + plane]) * .5;
   }
   projectPressure(sim, b);
-  let peak = 2;
+  let peak = 5;
   for (const field of [b.fx, b.fy, b.fz]) {
     for (let i = 0; i < field.length; i++) {
       const abs = Math.abs(field[i]);
@@ -88,7 +88,7 @@ export function stepFluid(sim, dt) {
     sim.vz[i] = nz > 1 ? b.vz[i] - (pressure[z + 1 < nz ? i + plane : i] - pressure[z ? i - plane : i]) * nz * .5 : 0;
     peak = Math.max(peak, Math.abs(sim.vx[i]), Math.abs(sim.vy[i]), Math.abs(sim.vz[i]));
   }
-  const scale = 2 / peak;
+  const scale = 5 / peak;
   for (const field of [b.fx, b.fy, b.fz, sim.vx, sim.vy, sim.vz]) for (let i = 0; i < field.length; i++) field[i] *= scale;
   // Use measured outgoing flux, reserving the MUSCL donor multiplier and
   // diffusion. This subcycles scalars without slowing momentum or biology.

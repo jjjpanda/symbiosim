@@ -6,7 +6,7 @@ import { advanceParticles } from './render/particles.js';
 import { exchangeSpeed } from './sim/transfer-clock.js';
 import { bindCamera, defaultCamera, turnCamera, tipVessel } from './render/camera.js';
 import { vesselTilt } from './sim/vessel.js';
-import { pellicleStats, SKIM_THICKNESS } from './sim/pellicle.js';
+import { pellicleStats } from './sim/pellicle.js';
 import { teaColor } from './render/objects.js';
 import { pickVoxel, renderVoxel } from './render/voxel.js';
 import { fieldView, fieldRange, formatFieldValue } from './fields.js';
@@ -225,8 +225,23 @@ export class SymbiosimVessel extends HTMLElement {
         e.preventDefault(); e.stopPropagation(); this.drawVoxel();
       };
     }
+    const speedPopup = this.$('#speed-popup'), speedToggle = this.$('#speed-toggle');
+    this.setSpeedPopup = open => {
+      if (!speedPopup || !speedToggle) return;
+      speedPopup.hidden = !open;
+      speedToggle.classList?.toggle('on', open);
+      speedToggle.setAttribute?.('aria-expanded', String(open));
+    };
+    speedToggle.onclick = e => {
+      e.stopPropagation?.();
+      this.setSpeedPopup(Boolean(speedPopup.hidden));
+    };
+    this.shadowRoot.addEventListener?.('pointerdown', e => {
+      if (!speedPopup.hidden && !speedPopup.contains?.(e.target) && !speedToggle.contains?.(e.target)) this.setSpeedPopup(false);
+    });
     this.addEventListener('keydown', e => {
       const target = e.composedPath()[0];
+      if (e.key === 'Escape' && !speedPopup.hidden) { this.setSpeedPopup(false); e.preventDefault(); return; }
       if (e.ctrlKey || e.metaKey || e.altKey || target.matches?.('input, select, summary') || (target.matches?.('button') && [' ', 'Enter'].includes(e.key)) || this.$('#panel').open || this.$('#detail').open || this.$('#mold-dialog').open) return;
       if (e.key.toLowerCase() === 'w') { startSwirl(this); e.preventDefault(); }
       else if (this.command(e.key.toLowerCase(), e.shiftKey)) e.preventDefault();
@@ -284,7 +299,7 @@ export class SymbiosimVessel extends HTMLElement {
   }
 
   openHistory(kind) {
-    stopSwirl(this);
+    stopSwirl(this); this.setSpeedPopup?.(false);
     this.updateDetail(); this.$('#detail').showModal();
     this.$('#history-title-' + kind)?.scrollIntoView({ block: 'nearest' });
   }
@@ -304,17 +319,16 @@ export class SymbiosimVessel extends HTMLElement {
     else if (key === 'r') { Object.assign(this.camera, defaultCamera()); this.updateCamera(); }
     else if (key === ' ') { this.sim.playing = !this.sim.playing; }
     else if (key === 's') { this.sim.playing = false; this.advance(.08); }
-    else if (key === 'w') { this.sim.stir(); this.announce(this.sim.playing ? 'Swirling the tea.' : 'Swirl queued. Resume or Step to see the tea move.'); }
+    else if (key === 'w') { this.sim.stir(); }
     else if (key === 'h') {
       const accepted = this.sim.startTransfer('pour', .08, { temperature: 70, sugar: this.sim.care.sugar });
       this.intervene(accepted, 'Pouring hot tea at 70°C');
     }
     else if (key === 'n') {
-      if (!confirm('Start a new vessel? The current culture will be replaced.')) return true;
       this.restartVessel();
     }
     else if (key === 't') this.setAttribute('theme', this.isDark() ? 'light' : 'dark');
-    else if ((key === 'c' || key === 'e') && !this.hasAttribute?.('embed')) { stopSwirl(this); this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
+    else if ((key === 'c' || key === 'e') && !this.hasAttribute?.('embed')) { stopSwirl(this); this.setSpeedPopup?.(false); this.$('#panel').showModal(); if (key === 'e') this.$('#exchange-section').scrollIntoView({ block: 'start' }); }
     else if (key === 'f') { this.sim.speed = SPEEDS.find(speed => speed > this.sim.speed) || SPEEDS[0]; this.updateControls(); }
     else if (key === 'v') this.selectField(OVERLAYS[(OVERLAYS.indexOf(this.overlay) + 1) % OVERLAYS.length]);
     else return false;
@@ -322,7 +336,7 @@ export class SymbiosimVessel extends HTMLElement {
   }
 
   restartVessel() {
-    stopSwirl(this);
+    stopSwirl(this); this.setSpeedPopup?.(false);
     if (this.$('#mold-dialog').open) this.$('#mold-dialog').close();
     this.sim = new Simulation({ seed: seed(), width: this.sim.nx, height: this.sim.ny, depth: this.sim.nz });
     this.voxels = { yeast: pickVoxel(this.sim, 'yeast'), bacteria: pickVoxel(this.sim, 'bacteria') };
@@ -383,7 +397,6 @@ export class SymbiosimVessel extends HTMLElement {
     this.$('#film-thickness').textContent = `${fmt(film.thickness)} mm`;
     this.$('#film-load').value = film.thickness;
     this.$('#pellicle-status').textContent = `${Math.round(film.area * 100)}% coverage · ${position}`;
-    this.$('#film-care').textContent = `${s.care.autoSkim ? `Auto skim above ${SKIM_THICKNESS} mm` : 'Manual skimming'} · ${s.care.skims} skims`;
     this.$('#skim').disabled = s.mold.failed || s.coverage() < .001;
     this.$('#exchange-count').textContent = `${s.care.exchanges} auto exchanges · ${Math.round(s.volume * 100)}% full`;
     this.$('#care-status').textContent = s.care.autoDrain && s.care.teaMode ? 'Automatic tea care' : s.care.autoDrain ? 'Auto drain · refill off' : s.care.teaMode ? 'Automatic top-up' : 'Manual tea care';

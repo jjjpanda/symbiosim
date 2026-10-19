@@ -308,15 +308,15 @@ export class Simulation {
 
   stir(strength = 1) {
     if (!Number.isFinite(strength)) return;
-    strength = clamp(strength, -1, 1);
+    strength = clamp(strength, -2, 2);
     // Curl of a wall-vanishing vector potential in the horizontal plane.
     // Stronger near the surface, with no scalar or biomass injection.
     for (let z = 0; z < this.nz; z++) for (let y = 0; y < this.ny; y++) for (let x = 0; x < this.nx; x++) {
       const px = (x + .5) / this.nx, py = (y + .5) / this.ny, pz = (z + .5) / this.nz;
       const i = (z * this.ny + y) * this.nx + x;
-      const force = strength * .85 * Math.exp(-py * 1.6);
-      this.vx[i] = clamp(this.vx[i] - force * Math.sin(Math.PI * px) * Math.cos(Math.PI * pz), -2, 2);
-      this.vz[i] = this.nz > 1 ? clamp(this.vz[i] + force * Math.cos(Math.PI * px) * Math.sin(Math.PI * pz), -2, 2) : 0;
+      const force = strength * 1.15 * Math.exp(-py * 1.1);
+      this.vx[i] = clamp(this.vx[i] - force * Math.sin(Math.PI * px) * Math.cos(Math.PI * pz), -5, 5);
+      this.vz[i] = this.nz > 1 ? clamp(this.vz[i] + force * Math.cos(Math.PI * px) * Math.sin(Math.PI * pz), -5, 5) : 0;
     }
   }
 

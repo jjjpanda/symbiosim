@@ -144,7 +144,7 @@ export function renderVoxel(canvas, sim, voxel, dark=true, motion=true) {
     return {cells:0,agentId:null,coords:'No cell to follow',summary:'Waiting for a living cell',replaced};
   }
   const {centre,neighbors,trace}=voxelContext(sim,voxel,agent);
-  const cx=width/2,cy=height*.54,scale=Math.min(width*.28,height*.30)/REACH;
+  const cx=width/2,cy=height*.52,scale=Math.min(width-24,height-54)*.28/REACH;
   const c=Math.cos(voxel.yaw),s=Math.sin(voxel.yaw),cp=Math.cos(voxel.pitch),sp=Math.sin(voxel.pitch);
   const project=([x,y,z])=>{
     const rx=x*c-z*s,rz=x*s+z*c;
