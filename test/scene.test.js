@@ -106,7 +106,7 @@ test('the jar contains distinct inner and outer walls, shoulder, rolled rim, bas
     for (const mesh of [jar, tap])
       for (let i = 0; i < mesh.count; i++) {
         const at = i * STRIDE, p = camera.project(mesh.vertices.subarray(at, at + 3));
-        assert.ok(p[0] > 4 && p[0] < width - 4 && p[1] > 4 && p[1] < height - 4, 'The larger view must keep the entire vessel and tap in frame');
+        assert.ok(p[0] > 4 && p[0] < width - 4 && p[1] > 12 && p[1] < height - 12, 'The larger view must keep the entire vessel and tap in frame');
       }
   }
   for (const mesh of [jar, tap])

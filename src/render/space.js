@@ -45,7 +45,7 @@ export function cameraMatrix(width, height, orbit = {}, tilt = 0) {
   const zoom = Math.max(1, Math.min(3, orbit.zoom || 1));
   // Ease the aim from the overview into the lower third as the view magnifies.
   const focus = (zoom - 1) / 2;
-  const distance = 3.1 * Math.max(1, height / width * .78) * (1 + .45 * Math.abs(s)), target = .72 + (HEIGHT * .29 - .72) * focus;
+  const distance = 3.1 * Math.max(1, height / width * .78) * (1 + .45 * Math.abs(s)), target = .62 + (HEIGHT * .29 - .62) * focus;
   const eye = [Math.sin(yaw) * Math.cos(elevation) * distance, target + Math.sin(elevation) * distance, Math.cos(yaw) * Math.cos(elevation) * distance];
   const z = [eye[0], eye[1] - target, eye[2]].map(v => v / distance);
   const x = [Math.cos(yaw), 0, -Math.sin(yaw)], y = [z[1] * x[2], z[2] * x[0] - z[0] * x[2], -z[1] * x[0]];
